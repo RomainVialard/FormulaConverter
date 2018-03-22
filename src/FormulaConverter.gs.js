@@ -17,7 +17,6 @@
  * _toLinkHtml()
  *****************************************************************/
 
-var FormulaConverter_ = {};
 
 /**
  * Update a two-dimensional array of sheet values with =HYPERLINK() and =IMAGE() formulas
@@ -29,60 +28,70 @@ var FormulaConverter_ = {};
  * @param {number[]} columnsIgnored - an array of indexes of all columns to skip (no conversion)
  */
 function convertFormulasToHTML(formulas, values, columnsIgnored) {
-  if (formulas.length !== values.length || formulas[0].length !== values[0].length) {
-    throw new Error("Ranges do not match");
-  }
-  //double loop for 2 dimensions array
-  for (var i = 0; i < formulas.length; i++) {
-    for (var j = 0; j < formulas[0].length; j++) {
-      if (columnsIgnored && columnsIgnored.indexOf(j) >= 0) continue;
+  var rowNumber = formulas.length;
+  var colNumber = formulas.length;
+  
+  // Simple sanity check
+  if (rowNumber !== values.length || colNumber !== values[0].length) throw new Error("Ranges do not match");
+  
+  // Prepare quick ignored columns check
+  var columnsIgnored_set = {};
+  columnsIgnored && columnsIgnored.forEach(function(col){
+    columnsIgnored_set[col] = true;
+  });
+  
+  
+  // Double loop for 2 dimensions array
+  for (var i = 0; i < rowNumber; i++) {
+    for (var j = 0; j < colNumber; j++) {
+      if (columnsIgnored && columnsIgnored_set[j]) continue;
+      
       var formula = formulas[i][j];
       
-      if (formula) {
-        var regexImage = /=(?:arrayformula\(image\((.*?)[,;]?\)\)|image\((?:'|"|)(.*?)[,;]?(?:'|"|)\))/i;
-        var imageFormula = formula.match(regexImage);
-        var obj;
+      // If no formula, check if cell begins with http (a valid URL value)
+      if (!formula && /^http/.test(values[i][j].toString())) {
+        values[i][j] = FormulaConverter_._toLinkHtml(values[i][j]);
         
-        if (imageFormula) {
-          obj = {
-            row: i,
-            col: j,
-            rangeFormula: imageFormula[1] || imageFormula[2]
-          };
-          FormulaConverter_._getLinkFromFormula(obj, values);
+        continue;
+      }
+      
+      // TODO: check regex
+      var imageFormula = formula.match(/^=(?:arrayformula\(image\((.*?)[,;]?\)\)|image\(['"]?(.*?)[,;]?['"]?\))/i);
+      
+      if (imageFormula) {
+        FormulaConverter_._getLinkFromFormula({row: i, col: j, rangeFormula: imageFormula[1] || imageFormula[2]}, values);
+        
+        continue;
+      }
+      
+      
+      // TODO: check regex
+      var hyperLinkFormula = formula.match(/=(?:arrayformula\(HYPERLINK\((.*?)(?:[,;]\s?(.*?))?\)\)|HYPERLINK\(["']*(.*?)["']*(?:[,;]\s?["']*(.*?))?["']*\))/i);
+      
+      if (hyperLinkFormula) {
+        
+        // check if it's a simple hyperlink formula (just 2 strings, no cell reference)
+        // in that case, process is much more simple, no need to call FormulaConverter_._getLinkFromFormula()
+        // TODO: check if we can't use first regex for this as well
+        var simpleHyperLink = /=(?:HYPERLINK\(["'](.*?)["'](?:[,;]\s?["'](.*?))?["']\))/i;
+        var simple = formula.match(simpleHyperLink);
+        
+        if (simple) {
+          values[i][j] = FormulaConverter_._toLinkHtml(simple[1], simple[2]);
         }
         else {
-          var regexHyperLink = /=(?:arrayformula\(HYPERLINK\((.*?)(?:[,;]\s?(.*?))?\)\)|HYPERLINK\(["']*(.*?)["']*(?:[,;]\s?["']*(.*?))?["']*\))/i;
-          var hyperLinkFormula = formula.match(regexHyperLink);
-          if (hyperLinkFormula) {
-            obj = {
-              row: i,
-              col: j,
-              rangeFormula: hyperLinkFormula[1] || hyperLinkFormula[3]
-            };
-            obj.linkText = hyperLinkFormula[2] || hyperLinkFormula[4] || obj.rangeFormula;
-            // check if it's a simple hyperlink formula (just 2 strings, no cell reference)
-            // in that case, process is much more simple, no need to call FormulaConverter_._getLinkFromFormula()
-            var simpleHyperLink = /=(?:HYPERLINK\(["'](.*?)["'](?:[,;]\s?["'](.*?))?["']\))/i;
-            var simple = formula.match(simpleHyperLink);
-            if(simple) {
-              values[obj.row][obj.col] = FormulaConverter_._toLinkHtml(simple[1], simple[2]);
-            }
-            else {
-              FormulaConverter_._getLinkFromFormula(obj, values);
-            }
-          }
+          FormulaConverter_._getLinkFromFormula({
+            row: i,
+            col: j,
+            rangeFormula: hyperLinkFormula[1] || hyperLinkFormula[3],
+            linkText: hyperLinkFormula[2] || hyperLinkFormula[4] || hyperLinkFormula[1] || hyperLinkFormula[3]
+          }, values);
         }
       }
-      // If no formula, check if cell begins with http (a valid URL value)
-      // We must create an HTML anchor to correctly activate the click tracking
-      else {
-        if (values[i][j].toString().indexOf('http') === 0) {
-          values[i][j] = FormulaConverter_._toLinkHtml(values[i][j]);
-        }
-      }
+      
     }
   }
+  
 }
 
 
@@ -93,63 +102,67 @@ this['FormulaConverter'] = {
 };
 
 
+//<editor-fold desc="# Private methods">
+
+var FormulaConverter_ = {};
+
+
 /**
  * Get the URL from the given IMAGE or HYPERLINK formula
  * Handle direct link ("https://..."), cell reference (A1) and range (A1:A)
- * 
+ *
  * @param {object} obj                - An object with 4 keys
- * @param {string} obj.linkText       - the visible part of an HTML link (link text)
+ * @param {string} [obj.linkText]       - the visible part of an HTML link (link text)
  * @param {string} obj.rangeFormula   - the formula for the current cell / value
  * @param {number} obj.row            - the row index of the current cell / value in the given 2D array
  * @param {number} obj.col            - the column index of the current cell / value in the given 2D array
- * 
+ *
  * @param {Array<Array>} values         - a two-dimensional array of values
  */
 FormulaConverter_._getLinkFromFormula = function (obj, values) {
-  //Test if formula makes reference to another cell / range
+  // Test if formula makes reference to another cell / range
   // eg: =HYPERLINK(C3)
-  if (/^(?:[a-z]+|[a-z]+\d+|\d+)(?::[a-z]+|:[a-z]+\d+|:\d+)?$/i.test(obj.rangeFormula)) {
-    // Test if reference to a single cell or a range
-    if (obj.rangeFormula.indexOf(":") < 0) {
-      // reference to single cell
-      var range = FormulaConverter_._cellA1ToIndex(obj.rangeFormula);
-      // if linkText, it's a link, transform to HTML anchor
-      // else it's an image, transform to HTML IMG tag
-      if (obj.linkText) {
-        values[obj.row][obj.col] = FormulaConverter_._toLinkHtml(values[range.row][range.col], values[obj.row][obj.col]);
-      }
-      else {
-        values[obj.row][obj.col] = FormulaConverter_._toImgHtml(values[range.row][range.col]);
-      }
-    }
-    else {
-      // reference to range
-      var rangeData = FormulaConverter_._getBoundRange(obj.rangeFormula, values.length);
-      for (var i = rangeData.firstRow; i < rangeData.numberOfRows; i++) {
-        for (var j = rangeData.firstCol; j < rangeData.numberOfColumns; j++) {
-          if (!values[i][j]) continue;
-          
-          if (obj.linkText) {
-            values[obj.row + i][obj.col + j] = FormulaConverter_._toLinkHtml(values[i][j], values[obj.row + i][obj.col + j]);
-          }
-          else {
-            values[obj.row + i][obj.col + j] = FormulaConverter_._toImgHtml(values[i][j]);
-          }
-        }
-      }
-    }
-  }
-  else {
+  if (!/^(?:[a-z]+|[a-z]+\d+|\d+)(?::[a-z]+|:[a-z]+\d+|:\d+)?$/i.test(obj.rangeFormula)) {
+    
     // formula makes no reference to another cell / range
     // eg: =HYPERLINK("https://www.google.com/")
-    if (obj.linkText) {
-      values[obj.row][obj.col] = FormulaConverter_._toLinkHtml(obj.rangeFormula, obj.linkText);
-    }
-    else {
-      values[obj.row][obj.col] = FormulaConverter_._toImgHtml(obj.rangeFormula);
+    values[obj.row][obj.col] = obj.linkText
+      ? FormulaConverter_._toLinkHtml(obj.rangeFormula, obj.linkText)
+      : FormulaConverter_._toImgHtml(obj.rangeFormula);
+    
+    return;
+  }
+  
+  
+  // Test if reference to a single cell or a range
+  if (obj.rangeFormula.indexOf(":") < 0) {
+    // reference to single cell
+    var range = FormulaConverter_._cellA1ToIndex(obj.rangeFormula);
+    
+    // if linkText, it's a link, transform to HTML anchor
+    // else it's an image, transform to HTML IMG tag
+    values[obj.row][obj.col] = obj.linkText
+      ? FormulaConverter_._toLinkHtml(values[range.row][range.col], values[obj.row][obj.col])
+      : FormulaConverter_._toImgHtml(values[range.row][range.col]);
+    
+    return;
+  }
+  
+  // reference to range
+  var rangeData = FormulaConverter_._getBoundRange(obj.rangeFormula, values.length);
+  
+  for (var i = rangeData.firstRow; i < rangeData.numberOfRows; i++) {
+    for (var j = rangeData.firstCol; j < rangeData.numberOfColumns; j++) {
+      if (!values[i][j]) continue;
+      
+      // TODO: CHECK VALIDITY of LOGIC here. (obj.row + i does not make sense)
+      values[obj.row + i][obj.col + j] = obj.linkText
+        ? FormulaConverter_._toLinkHtml(values[i][j], values[obj.row + i][obj.col + j])
+        : FormulaConverter_._toImgHtml(values[i][j]);
     }
   }
 };
+
 
 /**
  * Convert a cell reference from A1Notation to 0-based indices (for arrays)
@@ -169,12 +182,9 @@ FormulaConverter_._cellA1ToIndex = function (cellA1, index) {
   // Use regex match to find column & row references.
   // Must start with letters, end with numbers.
   // This regex still allows individuals to provide illegal strings like "AB.#%123"
-  var match = cellA1.match(/(^[A-Z]+)|([0-9]+$)/gm);
+  var [colA1, rowA1] = cellA1.match(/(^[A-Z]+)|([0-9]+$)/gm) || [];
   
-  if (match.length !== 2) throw new Error("Invalid cell reference");
-  
-  var colA1 = match[0];
-  var rowA1 = match[1];
+  if (colA1 === undefined && rowA1 === undefined) throw new Error("Invalid cell reference");
   
   return {
     row: FormulaConverter_._rowA1ToIndex(rowA1, index),
@@ -228,35 +238,6 @@ FormulaConverter_._rowA1ToIndex = function (rowA1, index) {
 };
 
 /**
- * Return an html img tag built from the given url
- *
- * @param {string} url
- *
- * @return {string}
- */
-FormulaConverter_._toImgHtml = function (url) {
-  // if sheet contains 2 columns, one with raw url to image and one with the image formula placed after
-  // the url in first column will be replaced with an HTML anchor
-  // And then we will try to add an additional img tag, which will break
-  // So check if there's already an HTML anchor and remove it if it's the case
-  url = (url.match(/href="(.*?)"/) || [])[1] || url;
-  
-  return '<img style="max-width:100%" src="'+ url +'"/>';
-};
-
-/**
- * Return an html anchor tag built from the given url and linkText
- *
- * @param {string} url
- * @param {string} [linkText]
- *
- * @return {string}
- */
-FormulaConverter_._toLinkHtml = function (url, linkText) {
-  return '<a href="'+ url +'">'+ (linkText || url) +'</a>';
-};
-
-/**
  * Get the boundary of the given range in a1notation
  *
  * For example:
@@ -275,6 +256,7 @@ FormulaConverter_._getBoundRange = function (range, totalRow) {
   var ranges = range.split(":");
   var firstCell = FormulaConverter_._cellA1ToIndex(ranges[0]);
   
+  // TODO: check logic here
   var lastCell = FormulaConverter_._cellA1ToIndex(ranges[1] + (ranges[1].length > 1 ? '' : firstCell.row + 1));
   
   
@@ -285,3 +267,35 @@ FormulaConverter_._getBoundRange = function (range, totalRow) {
     numberOfColumns: lastCell.col + 1 - firstCell.col
   };
 };
+
+
+/**
+ * Return an html img tag built from the given url
+ *
+ * @param {string} url
+ *
+ * @return {string}
+ */
+FormulaConverter_._toImgHtml = function (url) {
+  // if sheet contains 2 columns, one with raw url to image and one with the image formula placed after
+  // the url in first column will be replaced with an HTML anchor
+  // And then we will try to add an additional img tag, which will break
+  // So check if there's already an HTML anchor and remove it if it's the case
+  url = (url.match(/href="(.*?)"/) || [])[1] || url;
+  
+  return '<img style="max-width:100%" src="' + url + '"/>';
+};
+
+/**
+ * Return an html anchor tag built from the given url and linkText
+ *
+ * @param {string} url
+ * @param {string} [linkText]
+ *
+ * @return {string}
+ */
+FormulaConverter_._toLinkHtml = function (url, linkText) {
+  return '<a href="' + url + '">' + (linkText || url) + '</a>';
+};
+
+//</editor-fold>
