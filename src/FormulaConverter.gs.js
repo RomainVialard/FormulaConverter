@@ -9,7 +9,7 @@
  *
  * convertFormulasToHTML()
  *
- * _getLinkFromFormula()
+ * _insertHTML_fromFormula()
  * _cellA1ToIndex()
  * _colA1ToIndex()
  * _rowA1ToIndex()
@@ -25,14 +25,16 @@
  *
  * @param {string[][]} formulas - a two-dimensional array of formulas in string format
  * @param {Array<Array>} values - a two-dimensional array of values
- * @param {number[]} columnsIgnored - an array of indexes of all columns to skip (no conversion)
+ * @param {number[]} [columnsIgnored] - an array of indexes of all columns to skip (no conversion)
+ * 
+ * @return {object[][]}
  */
 function convertFormulasToHTML(formulas, values, columnsIgnored) {
-  var rowNumber = formulas.length;
-  var colNumber = formulas.length;
+  var numberOfRows = formulas.length;
+  var numberOfCols = formulas[0].length;
   
   // Simple sanity check
-  if (rowNumber !== values.length || colNumber !== values[0].length) throw new Error("Ranges do not match");
+  if (numberOfRows !== values.length || numberOfCols !== values[0].length) throw new Error("Ranges do not match");
   
   // Prepare quick ignored columns check
   var columnsIgnored_set = {};
@@ -42,8 +44,8 @@ function convertFormulasToHTML(formulas, values, columnsIgnored) {
   
   
   // Double loop for 2 dimensions array
-  for (var i = 0; i < rowNumber; i++) {
-    for (var j = 0; j < colNumber; j++) {
+  for (var i = 0; i < numberOfRows; i++) {
+    for (var j = 0; j < numberOfCols; j++) {
       if (columnsIgnored && columnsIgnored_set[j]) continue;
       
       var formula = formulas[i][j];
@@ -55,43 +57,43 @@ function convertFormulasToHTML(formulas, values, columnsIgnored) {
         continue;
       }
       
-      // TODO: check regex
+      // TODO: check regex (we only want the first parameter of the Image formula)
       var imageFormula = formula.match(/^=(?:arrayformula\(image\((.*?)[,;]?\)\)|image\(['"]?(.*?)[,;]?['"]?\))/i);
       
       if (imageFormula) {
-        FormulaConverter_._getLinkFromFormula({row: i, col: j, rangeFormula: imageFormula[1] || imageFormula[2]}, values);
+        FormulaConverter_._insertHTML_fromFormula({row: i, col: j, rangeFormula: imageFormula[1] || imageFormula[2]}, values);
         
         continue;
       }
       
       
       // TODO: check regex
+      // TODO: add HYPERLINK(url, IMAGE(url)) support (build clickable images)
       var hyperLinkFormula = formula.match(/=(?:arrayformula\(HYPERLINK\((.*?)(?:[,;]\s?(.*?))?\)\)|HYPERLINK\(["']*(.*?)["']*(?:[,;]\s?["']*(.*?))?["']*\))/i);
+      if (!hyperLinkFormula) continue;
       
-      if (hyperLinkFormula) {
-        
-        // check if it's a simple hyperlink formula (just 2 strings, no cell reference)
-        // in that case, process is much more simple, no need to call FormulaConverter_._getLinkFromFormula()
-        // TODO: check if we can't use first regex for this as well
-        var simpleHyperLink = /=(?:HYPERLINK\(["'](.*?)["'](?:[,;]\s?["'](.*?))?["']\))/i;
-        var simple = formula.match(simpleHyperLink);
-        
-        if (simple) {
-          values[i][j] = FormulaConverter_._toLinkHtml(simple[1], simple[2]);
-        }
-        else {
-          FormulaConverter_._getLinkFromFormula({
-            row: i,
-            col: j,
-            rangeFormula: hyperLinkFormula[1] || hyperLinkFormula[3],
-            linkText: hyperLinkFormula[2] || hyperLinkFormula[4] || hyperLinkFormula[1] || hyperLinkFormula[3]
-          }, values);
-        }
+      // check if it's a simple hyperlink formula (just 2 strings, no cell reference)
+      // in that case, process is much more simple, no need to call FormulaConverter_._insertHTML_fromFormula()
+      // TODO: check if we can't use first regex for this as well
+      var simpleHyperLink = /=(?:HYPERLINK\(["'](.*?)["'](?:[,;]\s?["'](.*?))?["']\))/i;
+      var simple = formula.match(simpleHyperLink);
+      
+      if (simple) {
+        values[i][j] = FormulaConverter_._toLinkHtml(simple[1], simple[2]);
+      }
+      else {
+        FormulaConverter_._insertHTML_fromFormula({
+          row: i,
+          col: j,
+          rangeFormula: hyperLinkFormula[1] || hyperLinkFormula[3],
+          linkText: hyperLinkFormula[2] || hyperLinkFormula[4] || hyperLinkFormula[1] || hyperLinkFormula[3]
+        }, values);
       }
       
     }
   }
   
+  return values;
 }
 
 
@@ -119,7 +121,7 @@ var FormulaConverter_ = {};
  *
  * @param {Array<Array>} values         - a two-dimensional array of values
  */
-FormulaConverter_._getLinkFromFormula = function (obj, values) {
+FormulaConverter_._insertHTML_fromFormula = function (obj, values) {
   // Test if formula makes reference to another cell / range
   // eg: =HYPERLINK(C3)
   if (!/^(?:[a-z]+|[a-z]+\d+|\d+)(?::[a-z]+|:[a-z]+\d+|:\d+)?$/i.test(obj.rangeFormula)) {
@@ -283,7 +285,7 @@ FormulaConverter_._toImgHtml = function (url) {
   // So check if there's already an HTML anchor and remove it if it's the case
   url = (url.match(/href="(.*?)"/) || [])[1] || url;
   
-  return '<img style="max-width:100%" src="' + url + '"/>';
+  return '<img style="max-width:100%" src="'+ url +'"/>';
 };
 
 /**
@@ -295,7 +297,7 @@ FormulaConverter_._toImgHtml = function (url) {
  * @return {string}
  */
 FormulaConverter_._toLinkHtml = function (url, linkText) {
-  return '<a href="' + url + '">' + (linkText || url) + '</a>';
+  return '<a href="'+ url +'">'+ (linkText || url) +'</a>';
 };
 
 //</editor-fold>
