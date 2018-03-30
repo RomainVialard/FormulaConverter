@@ -1,6 +1,6 @@
 {
 	"name": "@scriptaddicts/gas-formula-converter",
-	"version": "0.1.0",
+	"version": "1.0.0",
 	"description": "Convert spreadsheet =HYPERLINK() & =IMAGE() formulas to HTML. For Google Apps Script.",
 	"author": {
 		"name": "Romain Vialard",
