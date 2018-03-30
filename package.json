@@ -12,6 +12,9 @@
 			"email": "jeanremi.delteil@gmail.com"
 		}
 	],
+	"scripts": {
+		"pushTest": "cd ./src/ && clasp push"
+	},
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/RomainVialard/FormulaConverter.git"

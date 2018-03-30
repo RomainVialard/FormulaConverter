@@ -22,13 +22,17 @@ function tests() {
   var sheetTests = sps.getSheetByName('tests');
   
   
-  // Hyperlinks
-  var rangeHyperLink = sheetTests.getRange('B2:C8');
-  var rangeHyperLinkOutput = sheetTests.getRange('E2:F8');
+  var range = sheetTests.getRange('A1:C12');
+  var rangeOutput = sheetTests.getRange('E2:E12');
   
   
-  var processedHyperlinkValues = FormulaConverter.convertFormulasToHTML(rangeHyperLink.getFormulas(), rangeHyperLink.getValues());
+  var processedHyperlinkValues = FormulaConverter.convertFormulasToHTML(range.getFormulas(), range.getValues());
   
-  rangeHyperLinkOutput.setValues(processedHyperlinkValues);
+  // select only output link tests
+  var output = [];
+  for (var i = 1; i < processedHyperlinkValues.length; i++){
+    output.push([processedHyperlinkValues[i][2]]);
+  }
   
+  rangeOutput.setValues(output);
 }
