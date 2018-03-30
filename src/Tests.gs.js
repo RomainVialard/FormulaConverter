@@ -22,7 +22,7 @@ function tests() {
   var sheetTests = sps.getSheetByName('tests');
   
   
-  var range = sheetTests.getRange('A1:C12');
+  var range = sheetTests.getRange('B2:C12');
   var rangeOutput = sheetTests.getRange('E2:E12');
   
   
@@ -30,9 +30,26 @@ function tests() {
   
   // select only output link tests
   var output = [];
-  for (var i = 1; i < processedHyperlinkValues.length; i++){
-    output.push([processedHyperlinkValues[i][2]]);
+  for (var i = 0; i < processedHyperlinkValues.length; i++){
+    output.push([processedHyperlinkValues[i][1]]);
   }
   
   rangeOutput.setValues(output);
+}
+
+
+function testIndividualFn() {
+  
+  var param = {
+    range: 'C2:C8',
+    totalRows: 16
+  };
+  
+  var output = FormulaConverter_._getBoundRange(param.range, param.totalRows);
+  
+  Logger.log(JSON.stringify({
+    input: param,
+    output: output
+  }, null, '\t'));
+  
 }

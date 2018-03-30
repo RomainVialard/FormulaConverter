@@ -23,18 +23,42 @@
  * converted to HTML <a> and <img> tags
  * Nothing is returned as the a two-dimensional array of values given as parameter is directly updated
  *
- * @param {string[][]} formulas - a two-dimensional array of formulas in string format
- * @param {Array<Array>} values - a two-dimensional array of values
- * @param {number[]} [columnsIgnored] - an array of relative indexes of all columns to skip (no conversion)
+ * @param {{}} param
+ * @param {string || SpreadsheetApp.Range} param.range  - the Range passed, if not a string, formulas & values are not mandatory and will be fetched if not provided
+ * @param {string[][]} [param.formulas]                 - a two-dimensional array of formulas in string format
+ * @param {Array<Array>} [param.values]                 - a two-dimensional array of values
+ * @param {number[]} [param.columnsIgnored]             - an array of relative indexes of all columns to skip (no conversion)
  * 
  * @return {object[][]}
  */
-function convertFormulasToHTML(formulas, values, columnsIgnored) {
+function convertFormulasToHTML(param) {
+  var formulas = param.formulas;
+  var values = param.values;
+  var columnsIgnored = param.columnsIgnored;
+  var range = param.range;
+  
+  if (!range) throw new Error(FormulaConverter_.ERROR.INVALID_RANGE);
+  
+  if (typeof range !== 'string') {
+    // Get data / formula directly from the spreadsheet range
+    !formulas && (formulas = range.getFormulas());
+    !values && (values = range.getValues());
+    
+    range = range.getA1Notation();
+  }
+  
   var numberOfRows = formulas.length;
   var numberOfCols = formulas[0].length;
   
   // Simple sanity check
-  if (numberOfRows !== values.length || numberOfCols !== values[0].length) throw new Error("Ranges do not match");
+  if (numberOfRows !== values.length || numberOfCols !== values[0].length) throw new Error(FormulaConverter_.ERROR.RANGES_DONT_MATCH);
+  
+  // Get range
+  var dataRange = FormulaConverter_.rangeA1ToIndex(range, {
+    values: values,
+    formulas: formulas,
+  });
+  
   
   // duplicate values
   var output = JSON.parse(JSON.stringify(values));
@@ -111,6 +135,34 @@ this['FormulaConverter'] = {
 
 var FormulaConverter_ = {};
 
+/**
+ * @typedef {{
+ *   firstRow: number,
+ *   firstCol: number,
+ *   lastRow: number,
+ *   lastCol: number,
+ *   
+ *   nbRows: number,
+ *   nbColumns: number,
+ *   
+ *   [values]: Array<Array>,
+ *   [formulas]: Array<Array>,
+ *   [rangeA1]: string
+ * }} FormulaConverter_.CellRange
+ */
+/**
+ * @typedef {{
+ *   row: number,
+ *   col: number
+ * }} FormulaConverter_.cellA1
+ */
+/**
+ * @typedef {{
+ *   rows: number,
+ *   cols: number
+ * }} FormulaConverter_.DataRange
+ */
+
 
 /**
  * Get the URL from the given IMAGE or HYPERLINK formula
@@ -126,15 +178,6 @@ var FormulaConverter_ = {};
  * @param {Array<Array>} output         - a two-dimensional array of values to modify
  */
 FormulaConverter_._insertHTML_fromFormula = function (obj, values, output) {
-  /**
-   * @type {FormulaConverter_.DataRange}
-   */
-  var dataRange = {
-    rows: values.length,
-    cols: values[0].length
-  };
-  
-  
   // Test if formula makes reference to another cell / range
   // eg: =HYPERLINK(C3)
   if (!/^(?:[a-z]+|[a-z]+\d+|\d+)(?::[a-z]+|:[a-z]+\d+|:\d+)?$/i.test(obj.rangeFormula)) {
@@ -152,7 +195,7 @@ FormulaConverter_._insertHTML_fromFormula = function (obj, values, output) {
   // Test if reference to a single cell or a range
   if (obj.rangeFormula.indexOf(":") < 0) {
     // reference to single cell
-    var range = FormulaConverter_._cellA1ToIndex(obj.rangeFormula, dataRange);
+    var range = FormulaConverter_._cellA1ToIndex(obj.rangeFormula);
     
     // if label, it's a link, transform to HTML anchor
     // else it's an image, transform to HTML IMG tag
@@ -163,10 +206,17 @@ FormulaConverter_._insertHTML_fromFormula = function (obj, values, output) {
     return;
   }
   
+  /**
+   * @type {FormulaConverter_.DataRange}
+   */
+  var dataRange = {
+    rows: values.length,
+    cols: values[0].length
+  };
   
   // reference to range
-  var rangeUrlData = FormulaConverter_._getBoundRange(obj.rangeFormula, dataRange);
-  var rangeLabelData = obj.label && FormulaConverter_._getBoundRange(obj.label, dataRange);
+  var rangeUrlData = FormulaConverter_.rangeA1ToIndex(obj.rangeFormula, dataRange);
+  var rangeLabelData = obj.label && FormulaConverter_.rangeA1ToIndex(obj.label, dataRange);
   
   Logger.log({
     rangeA1: obj.rangeFormula,
@@ -199,14 +249,13 @@ FormulaConverter_._insertHTML_fromFormula = function (obj, values, output) {
  * or 1-based indices (for Spreadsheet Service methods).
  *
  * @param {string}    cellA1   Cell reference to be converted.
- * @param {FormulaConverter_.DataRange}   dataRange   Sheet Data bounds
  * @param {number}   [index]   (optional, default 0) Indicate 0 or 1 indexing
  *
  * @return {FormulaConverter_.cellA1} 0-based array coordinate.
  *
  * @throws                     Error if invalid parameter
  */
-FormulaConverter_._cellA1ToIndex = function (cellA1, dataRange, index) {
+FormulaConverter_._cellA1ToIndex = function (cellA1, index) {
   // Ensure index is (default) 0 or 1, no other values accepted.
   index = index ? 1 : 0;
   
@@ -216,16 +265,15 @@ FormulaConverter_._cellA1ToIndex = function (cellA1, dataRange, index) {
   // Will accept range like : "A2", "2", "A"
   var [colA1, rowA1] = cellA1.match(/(^[A-Z]+)|([0-9]+$)/gm) || [];
   
-  if (colA1 === undefined && rowA1 === undefined) throw new Error("Invalid cell reference");
+  if (colA1 === undefined && rowA1 === undefined) throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
   
-  return {
-    row: rowA1 !== undefined
-         ? FormulaConverter_._rowA1ToIndex(rowA1, index)
-         : dataRange.rows + index - 1,
-    col: colA1 !== undefined
-         ? FormulaConverter_._colA1ToIndex(colA1, index)
-         : dataRange.cols + index - 1
-  };
+  
+  var output = {};
+  
+  rowA1 !== undefined && (output.row = FormulaConverter_._rowA1ToIndex(rowA1, index));
+  colA1 !== undefined && (output.col = FormulaConverter_._colA1ToIndex(colA1, index));
+  
+  return output;
 };
 
 /**
@@ -240,7 +288,7 @@ FormulaConverter_._cellA1ToIndex = function (cellA1, dataRange, index) {
  * @throws                     Error if invalid parameter
  */
 FormulaConverter_._colA1ToIndex = function (colA1, index) {
-  if (typeof colA1 !== 'string' || colA1.length > 2) throw new Error("Expected column label.");
+  if (typeof colA1 !== 'string' || colA1.length > 2) throw FormulaConverter_.ERROR.EXPECTED_COLUMN_LABEL;
   
   // Ensure index is (default) 0 or 1, no other values accepted.
   index = index ? 1 : 0;
@@ -286,26 +334,41 @@ FormulaConverter_._rowA1ToIndex = function (rowA1, index) {
  * }
  *
  * @param {string} range - The range to process in a1 notation (A1:B5, A1:B, 1:2, C:T)
- * @param {FormulaConverter_.DataRange} dataRange - Data bound of the sheet
+ * @param {FormulaConverter_.CellRange} givenRange - Data accessible in the sheet
  * 
- * @return {FormulaConverter_.cellRange}
+ * @return {FormulaConverter_.CellRange}
  */
-FormulaConverter_._getBoundRange = function (range, dataRange) {
+FormulaConverter_.rangeA1ToIndex = function (range, givenRange) {
   var [firstCellA1, secondCellA1] = range.split(":");
   
-  var firstCell = FormulaConverter_._cellA1ToIndex(firstCellA1, dataRange);
-  var lastCell = FormulaConverter_._cellA1ToIndex(secondCellA1, dataRange);
+  var firstCell = FormulaConverter_._cellA1ToIndex(firstCellA1);
+  var lastCell = FormulaConverter_._cellA1ToIndex(secondCellA1);
   
-  var output = {
-    firstRow: Math.min(firstCell.row, lastCell.row),
-    firstCol: Math.min(firstCell.col, lastCell.col),
+  // the first cell of a range is ALWAYS of the A1 format
+  if (firstCell.row === undefined || firstCell.col === undefined) throw FormulaConverter_.ERROR.INVALID_RANGE;
   
-    lastRow: Math.max(firstCell.row, lastCell.row),
-    lastCol: Math.max(firstCell.col, lastCell.col),
-    
-    nbRows: 0,
-    nbColumns: 0,
-  };
+  
+  var lastRow = lastCell.row !== undefined
+    ? lastCell.row
+    : givenRange.rangeA1 === range
+      ? firstCell.row + givenRange.values.length - 1
+      : givenRange.firstRow + givenRange.nbRows - 1;
+  
+  var lastCol = lastCell.col !== undefined
+    ? lastCell.col
+    : givenRange.rangeA1 === range
+      ? firstCell.col + givenRange.values[0].length - 1
+      : givenRange.firstCol + givenRange.nbColumns - 1;
+  
+  // Init output
+  var output = givenRange.rangeA1 === range && JSON.parse(JSON.stringify(givenRange)) || {};
+  
+  output.rangeA1 = range;
+  
+  output.firstRow = Math.min(firstCell.row, lastRow)
+  output.firstCol = Math.min(firstCell.col, lastCol);
+  output.lastRow = Math.max(firstCell.row, lastRow);
+  output.lastCol = Math.max(firstCell.col, lastCol);
   
   output.nbRows = output.lastRow - output.firstRow + 1;
   output.nbColumns = output.lastCol - output.firstCol + 1;
@@ -313,28 +376,12 @@ FormulaConverter_._getBoundRange = function (range, dataRange) {
   return output;
 };
 
-/**
- * @typedef {{
- *   firstRow: number,
- *   firstCol: number,
- *   lastRow: number,
- *   lastCol: number,
- *   nbRows: number,
- *   nbColumns: number,
- * }} FormulaConverter_.cellRange
- */
-/**
- * @typedef {{
- *   row: number,
- *   col: number
- * }} FormulaConverter_.cellA1
- */
-/**
- * @typedef {{
- *   rows: number,
- *   cols: number
- * }} FormulaConverter_.DataRange
- */
+FormulaConverter_.ERROR = {
+  INVALID_RANGE: 'Invalid Range',
+  INVALID_CELL_REFERENCE: 'Invalid cell reference',
+  EXPECTED_COLUMN_LABEL: 'Expected column label'
+  RANGES_DONT_MATCH: 'Ranges do not match'
+};
 
 
 /**
@@ -369,3 +416,63 @@ FormulaConverter_._toLinkHtml = function (url, label) {
 };
 
 //</editor-fold>
+
+// LOCAL TEST
+function test() {
+  console.log('START');
+  
+  let param = {
+    values: [
+      ["Simple link (no formula)", "http://www.ikea.com/us/en/images/products/tjena-box-with-lid-green__0321624_PE515923_S4.JPG"],
+      ["Simple HYPERLINK", "http://www.ikea.com/us/en/images/products/micke-desk-white__0324519_PE517088_S4.JPG"],
+      ["HYPERLINK with link label", "Bouh"],
+      ["HYPERLINK with cell ref for url", "Bouh"],
+      ["HYPERLINK with 2 cells ref", "Simple link (no formula)"],
+      ["ARRAYFORMULA + HYPERLINK", "Bouh"],
+      ["idem", "Simple link (no formula)"],
+      ["Simple IMAGE", ""],
+      ["IMAGE with cell ref for url", ""],
+      ["ARRAYFORMULA + IMAGE", ""],
+      ["idem", ""],
+      ["Simple HYPERLINK + IMAGE", ""],
+      ["HYPERLINK + IMAGE with cell ref", ""],
+      ["HYPERLINK + IMAGE with ARRAYFORMULA", ""],
+      ["idem", ""]
+    ],
+    formulas: [
+      ["", ""],
+      ["", "=HYPERLINK(\"http://www.ikea.com/us/en/images/products/micke-desk-white__0324519_PE517088_S4.JPG\")"],
+      ["", "=HYPERLINK(\"http://www.ikea.com/us/en/images/products/micke-desk-white__0324519_PE517088_S4.JPG\", \"Bouh\")"],
+      ["", "=HYPERLINK(C2, \"Bouh\")"],
+      ["", "=HYPERLINK(C2, B2)"],
+      ["", "=ARRAYFORMULA(HYPERLINK(C2:C3, C5:C6))"],
+      ["", ""],
+      ["", "=IMAGE(\"http://www.ikea.com/us/en/images/products/micke-desk-white__0324519_PE517088_S4.JPG\")"],
+      ["", "=IMAGE(C2)"],
+      ["", "=ARRAYFORMULA(IMAGE(C2:C3))"],
+      ["", ""],
+      ["", "=HYPERLINK(\"http://www.ikea.com/us/en/images/products/tjena-box-with-lid-green__0321624_PE515923_S4.JPG\", IMAGE(\"http://www.ikea.com/us/en/images/products/tjena-box-with-lid-green__0321624_PE515923_S4.JPG\"))"],
+      ["", "=HYPERLINK(C2, IMAGE(C2))"],
+      ["", "=ARRAYFORMULA(HYPERLINK(C2:C3, IMAGE(C2:C3)))"],
+      ["", ""]
+    ],
+    range: 'B2:C',
+  };
+  
+  // test get data bound
+  let dataRange = FormulaConverter_.rangeA1ToIndex(param.range, {
+    values: param.values,
+    formulas: param.formulas,
+    rangeA1: param.range
+  })
+  
+  console.log(dataRange);
+  
+  let res = FormulaConverter_.rangeA1ToIndex('B4:C', dataRange)
+  
+  console.log(res);
+  
+}
+
+
+test();
