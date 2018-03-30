@@ -1,2 +1,5 @@
 /.idea/
 /node_modules/
+/src/.clasp.json
+/src/appsscript.json
+/src/Tests.gs.js
