@@ -200,7 +200,7 @@ var FormulaConverter_ = function (range, values, formulas, ignoredCols) {
 /**
  * Convert all IMAGE / HYPERLINK formulas to HTML value
  */
-FormulaConverter_.prototype.process = function() {
+FormulaConverter_.prototype.process = function () {
   
   // Double loop for 2 dimensions array
   for (var j = 0; j < this.dataRange.nbColumns; j++) {
@@ -221,50 +221,142 @@ FormulaConverter_.prototype.process = function() {
         continue;
       }
       
+      var res;
+      try {
+        res = this.findFunction((this.dataRange.formulas[i][j] || '').slice(1), this.dataRange.values[i][j]);
+      }
+      catch (e) {
+        res = '#ERROR!';
+      }
       
-      this.findFunction(this.dataRange.values[i][j], (this.dataRange.formulas[i][j] || '').slice(1));
+      
+      // Store result if it is a value
+      res !== undefined && (this.output[i][j] = res);
     }
   }
   
   return this.output;
 };
 
-FormulaConverter_.prototype.findFunction = function(value, formula) {
+
+/**
+ * Start formula parsing
+ * 
+ * @param {string} formula
+ * @param {string} value
+ * 
+ * @return {*|boolean|string}
+ */
+FormulaConverter_.prototype.findFunction = function(formula, value) {
   var [/*full match*/, funcName, paramString] = formula.match(/^\s*(\w+)\((.+)\)\s*$/) || [];
   
-  var params = FormulaConverter_.extractParam(paramString || '');
+  var params = FormulaConverter_._extractParam(paramString || '');
+  funcName = (funcName || '').toLowerCase();
   
+  // get corresponding Sps function
+  var func = this['_SPS_FUNCTION_'+ funcName] || false;
   
-  console.log(funcName, params);
+  // Apply function
+  var result = func
+    ? func.apply(this, params)
+    : value;
   
+  // Test if result is an URL
+  /^http/.test(result) && (result = FormulaConverter_._toLinkHtml(result));
+  
+  return result; 
 };
-FormulaConverter_.FUNCTIONS = {
-  'hyperlink': true,
-  'image': true,
-  'arrayformula': true,
-};
-FormulaConverter_.PARAM_EXTRACT = {
-  openers: {
-    all: {'"': true, "'": true, "(": true},
-    '(': {'"': true, "'": true, "(": true},
-    '"': {},
-    '': {},
-  },
-  closers: {
-    '(': {')': true},
-    '"': {'"': true},
-    "'": {"'": true},
-  },
-  isInString: {
-    '(': false,
-    '"': true,
-    "'": true,
-  },
-  paramSeparator: {
-    ',': true,
-    ';': true
+
+/**
+ * Return the value for either a quote surrounded string, or a A1 cell reference
+ *
+ * @param {string} param
+ *
+ * @return {string}
+ * @private
+ */
+FormulaConverter_.prototype._getParamValue = function (param) {
+  var [/*full match*/, value] = param.match(/^['"](.*)['"]$/) || [];
+  
+  // Text value
+  if (value !== undefined) return value;
+  
+  // Is it a cell reference ?
+  if (/^[A-Z]+\d+$/.test(param)){
+    return this._getA1CellValue(param);
   }
+  
+  // it's a formula ! (can be a range too: A1:B)
+  return this.findFunction(param, undefined);
 };
+
+/**
+ * Get value in the data array by A1 cell notation
+ *
+ * @param {string} A1
+ *
+ * @return {*}
+ * @private
+ */
+FormulaConverter_.prototype._getA1CellValue = function (A1) {
+  var cellRef = FormulaConverter_._cellA1ToIndex(A1);
+  
+  if (cellRef.col === undefined && cellRef.row === undefined) throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
+  
+  return this.dataRange.values[cellRef.row - this.dataRange.firstRow][cellRef.col - this.dataRange.firstCol];
+};
+
+
+//<editor-fold desc="# SPREADSHEET functions">
+
+/**
+ * Apply the Hyperlink function
+ * 
+ * @param {string} url
+ * @param {string} [label]
+ * 
+ * @private
+ */
+FormulaConverter_.prototype._SPS_FUNCTION_hyperlink = function (url, label) {
+  console.log('HYPERLINK', url, label);
+  
+  url = this._getParamValue(url);
+  label = label && this._getParamValue(label) || '';
+  
+  
+  return FormulaConverter_._toLinkHtml(url, label);
+};
+
+/**
+ * Apply the Image function
+ * 
+ * @param {string} url
+ * 
+ * @private
+ */
+FormulaConverter_.prototype._SPS_FUNCTION_image = function (url) {
+  console.log('IMAGE', url);
+  
+  url = this._getParamValue(url);
+  
+  return FormulaConverter_._toImgHtml(url);
+};
+
+/**
+ * Apply the ArrayFormula function
+ * 
+ * @param {string} formula
+ * 
+ * @private
+ */
+FormulaConverter_.prototype._SPS_FUNCTION_arrayformula = function (formula) {
+  console.log('ARRAYFORMULA', formula);
+  
+  
+};
+
+//</editor-fold>
+
 
 /**
  * Extract a spreadsheet function parameters from a string
@@ -273,7 +365,7 @@ FormulaConverter_.PARAM_EXTRACT = {
  *
  * @return {Array<string>}
  */
-FormulaConverter_.extractParam = function (txt) {
+FormulaConverter_._extractParam = function (txt) {
   var group = [];
   var state = {
     openers: FormulaConverter_.PARAM_EXTRACT.openers.all,
@@ -331,9 +423,31 @@ FormulaConverter_.extractParam = function (txt) {
   // Add last part
   params.push(txt.slice(currentParamIndex, i).trim());
   
-  console.log(params);
   return params;
 };
+FormulaConverter_.PARAM_EXTRACT = {
+  openers: {
+    all: {'"': true, "'": true, "(": true},
+    '(': {'"': true, "'": true, "(": true},
+    '"': {},
+    '': {},
+  },
+  closers: {
+    '(': {')': true},
+    '"': {'"': true},
+    "'": {"'": true},
+  },
+  isInString: {
+    '(': false,
+    '"': true,
+    "'": true,
+  },
+  paramSeparator: {
+    ',': true,
+    ';': true
+  }
+};
+
 
 
 
