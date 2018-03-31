@@ -39,37 +39,19 @@ function convertFormulasToHTML(param) {
   
   if (!range) throw new Error(FormulaConverter_.ERROR.INVALID_RANGE);
   
+  // Get data / formula / range directly from the spreadsheet range
   if (typeof range !== 'string') {
-    // Get data / formula directly from the spreadsheet range
     !formulas && (formulas = range.getFormulas());
     !values && (values = range.getValues());
     
     range = range.getA1Notation();
   }
   
-  var numberOfRows = formulas.length;
-  var numberOfCols = formulas[0].length;
+  var converter = new FormulaConverter_(range, values, formulas, columnsIgnored);
   
-  // Simple sanity check
-  if (numberOfRows !== values.length || numberOfCols !== values[0].length) throw new Error(FormulaConverter_.ERROR.RANGES_DONT_MATCH);
+  return converter.process();
   
-  // Get range
-  var dataRange = FormulaConverter_.rangeA1ToIndex(range, {
-    values: values,
-    formulas: formulas,
-  });
-  
-  
-  // duplicate values
-  var output = JSON.parse(JSON.stringify(values));
-  
-  // Prepare quick ignored columns check
-  var columnsIgnored_set = {};
-  columnsIgnored && columnsIgnored.forEach(function(col){
-    columnsIgnored_set[col] = true;
-  });
-  
-  
+/*
   // Double loop for 2 dimensions array
   for (var i = 0; i < numberOfRows; i++) {
     for (var j = 0; j < numberOfCols; j++) {
@@ -121,6 +103,7 @@ function convertFormulasToHTML(param) {
   }
   
   return output;
+*/
 }
 
 
@@ -133,8 +116,9 @@ this['FormulaConverter'] = {
 
 //<editor-fold desc="# Private methods">
 
-var FormulaConverter_ = {};
-
+/**
+ * @namespace FormulaConverter_
+ */
 /**
  * @typedef {{
  *   firstRow: number,
@@ -162,6 +146,195 @@ var FormulaConverter_ = {};
  *   cols: number
  * }} FormulaConverter_.DataRange
  */
+
+/**
+ * Build helper formula converter on the givenDataRange (accessible data)
+ * 
+ * @param {string} range
+ * @param {Array<Array<string || Object>>} values
+ * @param {Array<Array<string>>} formulas
+ * @param {Array<number | string>} [ignoredCols] - Exclude columns of the process, number are index relative to the range, string are absolute column labels ('A')
+ * 
+ * @constructor
+ * @private
+ */
+var FormulaConverter_ = function (range, values, formulas, ignoredCols) {
+  
+  // Simple sanity check
+  if (formulas.length !== values.length || formulas[0].length !== values[0].length) throw new Error(FormulaConverter_.ERROR.RANGES_DONT_MATCH);
+  
+  // Get range
+  // noinspection JSCheckFunctionSignatures
+  /**
+   * @type {FormulaConverter_.CellRange}
+   */
+  this.dataRange = this.rangeA1ToIndex(range, {
+    values: values,
+    formulas: formulas
+  });
+  
+  // init output
+  this.output = [];
+  for (var i = 0; i < this.dataRange.nbRows; i++) {
+    this.output[i] = [];
+    
+    for (var j = 0; j < this.dataRange.nbColumns; j++) {
+      this.output[i][j] = '';
+    }
+  }
+  
+  
+  // Prepare quick ignored columns check
+  this.columnsIgnored_set = {};
+  
+  ignoredCols && ignoredCols.forEach(function(col){
+    this.columnsIgnored_set[
+      typeof col === 'number'
+        ? col
+        : FormulaConverter_._colA1ToIndex(col) - this.dataRange.firstCol
+      ] = true;
+  }.bind(this));
+  
+};
+
+/**
+ * Convert all IMAGE / HYPERLINK formulas to HTML value
+ */
+FormulaConverter_.prototype.process = function() {
+  
+  // Double loop for 2 dimensions array
+  for (var j = 0; j < this.dataRange.nbColumns; j++) {
+    // Skip ignored columns
+    if (this.columnsIgnored_set[j]) continue;
+    
+    // process all rows
+    for (var i = 0; i < this.dataRange.nbRows; i++) {
+      // Skip already processed cells
+      if (this.output[i][j]) continue;
+      
+      // If no formula, check if cell begins with http (a valid URL value)
+      if (!this.dataRange.formulas[i][j]) {
+        if (/^http/.test(this.dataRange.values[i][j])) {
+          this.output[i][j] = FormulaConverter_._toLinkHtml(this.dataRange.values[i][j]);
+        }
+        
+        continue;
+      }
+      
+      
+      this.findFunction(this.dataRange.values[i][j], (this.dataRange.formulas[i][j] || '').slice(1));
+    }
+  }
+  
+  return this.output;
+};
+
+FormulaConverter_.prototype.findFunction = function(value, formula) {
+  var [/*full match*/, funcName, paramString] = formula.match(/^\s*(\w+)\((.+)\)\s*$/) || [];
+  
+  var params = FormulaConverter_.extractParam(paramString || '');
+  
+  
+  console.log(funcName, params);
+  
+};
+FormulaConverter_.FUNCTIONS = {
+  'hyperlink': true,
+  'image': true,
+  'arrayformula': true,
+};
+FormulaConverter_.PARAM_EXTRACT = {
+  openers: {
+    all: {'"': true, "'": true, "(": true},
+    '(': {'"': true, "'": true, "(": true},
+    '"': {},
+    '': {},
+  },
+  closers: {
+    '(': {')': true},
+    '"': {'"': true},
+    "'": {"'": true},
+  },
+  isInString: {
+    '(': false,
+    '"': true,
+    "'": true,
+  },
+  paramSeparator: {
+    ',': true,
+    ';': true
+  }
+};
+
+/**
+ * Extract a spreadsheet function parameters from a string
+ *
+ * @param {string} txt
+ *
+ * @return {Array<string>}
+ */
+FormulaConverter_.extractParam = function (txt) {
+  var group = [];
+  var state = {
+    openers: FormulaConverter_.PARAM_EXTRACT.openers.all,
+    closers: {},
+    inString: false,
+    token: ''
+  };
+  var currentParamIndex = 0;
+  var params = [];
+  
+  for (var i = 0; i < txt.length; i++) {
+    var char = txt[i];
+    
+    // No group, and a comma: it's a parameters we can slice
+    if (FormulaConverter_.PARAM_EXTRACT.paramSeparator[char] && group.length === 0) {
+      params.push(txt.slice(currentParamIndex, i).trim());
+      
+      currentParamIndex = i + 1;
+      continue;
+    }
+    
+    // Manage opener / closer
+    if (state.closers[char]) {
+      
+      // Detect same quote escaping: "bla""bla" or 'bla''bla'
+      if (state.inString && char === state.token && txt[i+1] === state.token){
+        // Skip next char
+        i++;
+        continue;
+      }
+      
+      // remove last token
+      group.pop();
+      
+      // update state
+      state.token = group[group.length - 1] || '';
+      state.closers = FormulaConverter_.PARAM_EXTRACT.closers[state.token] || {};
+      state.openers = FormulaConverter_.PARAM_EXTRACT.openers[state.token] || {};
+      
+      // Reset string status, as when a group close, we are outside a string
+      state.inString = false;
+    }
+    else if (state.openers[char]) {
+      group.push(char);
+      
+      state = {
+        closers: FormulaConverter_.PARAM_EXTRACT.closers[char] || {},
+        openers: FormulaConverter_.PARAM_EXTRACT.openers[char] || {},
+        inString: FormulaConverter_.PARAM_EXTRACT.isInString[char] || false,
+        token: char,
+      };
+    }
+  }
+  
+  // Add last part
+  params.push(txt.slice(currentParamIndex, i).trim());
+  
+  console.log(params);
+  return params;
+};
+
 
 
 /**
@@ -334,41 +507,53 @@ FormulaConverter_._rowA1ToIndex = function (rowA1, index) {
  * }
  *
  * @param {string} range - The range to process in a1 notation (A1:B5, A1:B, 1:2, C:T)
- * @param {FormulaConverter_.CellRange} givenRange - Data accessible in the sheet
+ * @param {FormulaConverter_.CellRange} initialRange - Data accessible in the sheet
  * 
  * @return {FormulaConverter_.CellRange}
  */
-FormulaConverter_.rangeA1ToIndex = function (range, givenRange) {
+FormulaConverter_.prototype.rangeA1ToIndex = function (range, initialRange) {
   var [firstCellA1, secondCellA1] = range.split(":");
   
   var firstCell = FormulaConverter_._cellA1ToIndex(firstCellA1);
   var lastCell = FormulaConverter_._cellA1ToIndex(secondCellA1);
   
-  // the first cell of a range is ALWAYS of the A1 format
-  if (firstCell.row === undefined || firstCell.col === undefined) throw FormulaConverter_.ERROR.INVALID_RANGE;
+  // the first cell of a range is ALWAYS of the A1 format, or range is A:B and must start at first row
+  var firstRow = firstCell.row !== undefined
+    ? firstCell.row
+    : initialRange || this.dataRange.firstRow === 0
+      ? 0
+      : undefined;
+  
+  var firstCol = firstCell.col !== undefined
+    ? firstCell.col
+    : initialRange || this.dataRange.firstCol === 0
+      ? 0
+      : undefined;
+  
+  if (firstRow === undefined || firstCol === undefined) throw FormulaConverter_.ERROR.INVALID_RANGE;
   
   
   var lastRow = lastCell.row !== undefined
     ? lastCell.row
-    : givenRange.rangeA1 === range
-      ? firstCell.row + givenRange.values.length - 1
-      : givenRange.firstRow + givenRange.nbRows - 1;
+    : initialRange
+      ? firstCell.row + initialRange.values.length - 1
+      : this.dataRange.firstRow + this.dataRange.nbRows - 1;
   
   var lastCol = lastCell.col !== undefined
     ? lastCell.col
-    : givenRange.rangeA1 === range
-      ? firstCell.col + givenRange.values[0].length - 1
-      : givenRange.firstCol + givenRange.nbColumns - 1;
+    : initialRange
+      ? firstCell.col + initialRange.values[0].length - 1
+      : this.dataRange.firstCol + this.dataRange.nbColumns - 1;
   
   // Init output
-  var output = givenRange.rangeA1 === range && JSON.parse(JSON.stringify(givenRange)) || {};
+  var output = initialRange && JSON.parse(JSON.stringify(initialRange)) || {};
   
   output.rangeA1 = range;
   
-  output.firstRow = Math.min(firstCell.row, lastRow)
-  output.firstCol = Math.min(firstCell.col, lastCol);
-  output.lastRow = Math.max(firstCell.row, lastRow);
-  output.lastCol = Math.max(firstCell.col, lastCol);
+  output.firstRow = Math.min(firstRow, lastRow);
+  output.firstCol = Math.min(firstCol, lastCol);
+  output.lastRow = Math.max(firstRow, lastRow);
+  output.lastCol = Math.max(firstCol, lastCol);
   
   output.nbRows = output.lastRow - output.firstRow + 1;
   output.nbColumns = output.lastCol - output.firstCol + 1;
@@ -379,7 +564,7 @@ FormulaConverter_.rangeA1ToIndex = function (range, givenRange) {
 FormulaConverter_.ERROR = {
   INVALID_RANGE: 'Invalid Range',
   INVALID_CELL_REFERENCE: 'Invalid cell reference',
-  EXPECTED_COLUMN_LABEL: 'Expected column label'
+  EXPECTED_COLUMN_LABEL: 'Expected column label',
   RANGES_DONT_MATCH: 'Ranges do not match'
 };
 
@@ -421,7 +606,7 @@ FormulaConverter_._toLinkHtml = function (url, label) {
 function test() {
   console.log('START');
   
-  let param = {
+  var param = {
     values: [
       ["Simple link (no formula)", "http://www.ikea.com/us/en/images/products/tjena-box-with-lid-green__0321624_PE515923_S4.JPG"],
       ["Simple HYPERLINK", "http://www.ikea.com/us/en/images/products/micke-desk-white__0324519_PE517088_S4.JPG"],
@@ -460,19 +645,20 @@ function test() {
   };
   
   // test get data bound
-  let dataRange = FormulaConverter_.rangeA1ToIndex(param.range, {
-    values: param.values,
-    formulas: param.formulas,
-    rangeA1: param.range
-  })
+  var converter = new FormulaConverter_(param.range, param.values, param.formulas);
   
-  console.log(dataRange);
-  
-  let res = FormulaConverter_.rangeA1ToIndex('B4:C', dataRange)
+  var res = converter.process();
   
   console.log(res);
   
 }
 
-
 test();
+
+
+
+// extractParam(`"azert", "zaert", "qdsfgh"`);
+// extractParam(`"aze,rt", "zaert", "qdsfgh"`);
+// extractParam(`IMAGE("aze,rt", "zaert"), "qdsfgh"`);
+// FormulaConverter_.extractParam(`IMAGE("az""e,rt"; "zaert"); "qdsfgh", 14`);
+

@@ -22,11 +22,15 @@ function tests() {
   var sheetTests = sps.getSheetByName('tests');
   
   
-  var range = sheetTests.getRange('B2:C12');
-  var rangeOutput = sheetTests.getRange('E2:E12');
+  var range = sheetTests.getRange('B2:C');
+  var rangeOutput = sheetTests.getRange('E2:E');
   
   
-  var processedHyperlinkValues = FormulaConverter.convertFormulasToHTML(range.getFormulas(), range.getValues());
+  var processedHyperlinkValues = FormulaConverter.convertFormulasToHTML({
+    range: range.getA1Notation(),
+    values: range.getValues(),
+    formulas: range.getFormulas()
+  });
   
   // select only output link tests
   var output = [];
