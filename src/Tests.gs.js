@@ -26,7 +26,7 @@ function tests() {
     'validation': {
       sheet: 'validation',
       rangeInput: 'B2:C',
-      rangeOutput: 'E2:E',
+      cellOutput: 'E2',
       res: {
         offset: 0,
         columns: [1],
@@ -35,7 +35,7 @@ function tests() {
     'test YAMM': {
       sheet: 'test YAMM',
       rangeInput: 'A1:F',
-      rangeOutput: 'H2:M',
+      cellOutput: 'H2',
       res: {
         offset: 1,
         columns: [0, 1, 2, 3, 4, 5],
@@ -44,7 +44,7 @@ function tests() {
     'isolatedTest': {
       sheet: 'isolatedTest',
       rangeInput: 'B4:B5',
-      rangeOutput: 'D4:D5',
+      cellOutput: 'D4',
       res: {
         offset: 0,
         columns: [0],
@@ -56,7 +56,7 @@ function tests() {
   
   var sheetTests = sps.getSheetByName(currentTest.sheet);
   var range = sheetTests.getRange(currentTest.rangeInput);
-  var rangeOutput = sheetTests.getRange(currentTest.rangeOutput);
+  var rangeOutput = sheetTests.getRange(currentTest.cellOutput);
   
   
   var processedHyperlinkValues = FormulaConverter.convertFormulasToHTML({
@@ -77,7 +77,10 @@ function tests() {
     output.push(row);
   }
   
-  rangeOutput.setValues(output);
+  // write results
+  sheetTests
+    .getRange(rangeOutput.getRow(), rangeOutput.getColumn(), output.length, output[0].length)
+    .setValues(output);
 }
 
 
