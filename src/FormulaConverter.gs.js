@@ -8,12 +8,6 @@
  * But no support for formulas referencing other sheets
  *
  * convertFormulasToHTML()
- *
- * _cellA1ToIndex()
- * _colA1ToIndex()
- * _rowA1ToIndex()
- * _toImgHtml()
- * _toLinkHtml()
  *****************************************************************/
 
 
@@ -66,21 +60,6 @@ this['FormulaConverter'] = {
  */
 /**
  * @typedef {{
- *   firstRow: number,
- *   firstCol: number,
- *   lastRow: number,
- *   lastCol: number,
- *   
- *   nbRows: number,
- *   nbColumns: number,
- *   
- *   [values]: Array<Array>,
- *   [formulas]: Array<Array>,
- *   [rangeA1]: string
- * }} FormulaConverter_.CellRange
- */
-/**
- * @typedef {{
  *   row: number,
  *   col: number
  * }} FormulaConverter_.cellA1
@@ -117,13 +96,11 @@ var FormulaConverter_ = function (range, values, formulas, ignoredCols) {
   /**
    * @type {FormulaConverter_.CellRange}
    */
-  this.dataRange = this.rangeA1ToIndex(range, {
+  this.dataRange = new FormulaConverter_.CellRange(range, {
     values: values,
     formulas: formulas,
-    output: values,
   });
   
-  this.output = this.dataRange.output;
   
   // init processed cells
   this._processed = [];
@@ -134,6 +111,9 @@ var FormulaConverter_ = function (range, values, formulas, ignoredCols) {
       this._processed[i][j] = false;
     }
   }
+  
+  // Clone values to init output
+  this.output = JSON.parse(JSON.stringify(this._processed/*values*/));
   
   
   // Prepare quick ignored columns check
@@ -213,9 +193,47 @@ FormulaConverter_.prototype.process = function () {
         res = '#ERROR!';
       }
       
+      // Apply Ranged results
+      if (Array.isArray(res)){
+        
+        var nbRows = res.length;
+        var nbCols = res[0].length;
+        
+        for (var offset_j = 0; offset_j < nbCols; offset_j++) {
+          var absolute_j = j + offset_j;
+          
+          // Skip ignored columns
+          if (this.columnsIgnored_set[absolute_j]) continue;
+          
+          for (var offset_i = 0; offset_i < nbRows; offset_i++) {
+            var absolute_i = i + offset_i;
+            
+            // Skip already processed cells
+            if (this._processed[absolute_i][absolute_j]) continue;
+            
+            var result = res[offset_i][offset_j];
+            if (result !== undefined) {
+              // Test if result is an URL
+              /^http/.test(result) && (result = FormulaConverter_._toLinkHtml(result));
+              
+              this.output[absolute_i][absolute_j] = result;
+            }
+            
+            this._processed[absolute_i][absolute_j] = true;
+          }
+        }
+        
+        continue;
+      }
       
-      // Store result if it is a value
-      res !== undefined && (this.output[i][j] = res);
+      if (res) {
+        // Test if result is an URL
+        /^http/.test(res) && (res = FormulaConverter_._toLinkHtml(res));
+        
+        // Store result if it is a value
+        this.output[i][j] = res;
+      }
+      
       
       this._processed[i][j] = true;
     }
@@ -245,14 +263,9 @@ FormulaConverter_.prototype._findFunction = function(formula, value) {
   
   
   // Apply function
-  var result = func
+  return func
     ? this._applyFunction(func, params)
     : value;
-  
-  // Test if result is an URL
-  result && /^http/.test(result) && (result = FormulaConverter_._toLinkHtml(result));
-  
-  return result;
 };
 
 /**
@@ -265,6 +278,7 @@ FormulaConverter_.prototype._findFunction = function(formula, value) {
  */
 FormulaConverter_.prototype._applyFunction = function (func, params) {
   var resolvedParams = [];
+  var applyArrayFormula_indexes = [];
   var applyArrayFormula = false;
   
   for (var i = 0; i < params.length; i++) {
@@ -294,16 +308,15 @@ FormulaConverter_.prototype._applyFunction = function (func, params) {
       // Type is a CELL here, so it can not take a range
       if (!this._arrayFormula) throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
       
-      var range = this.rangeA1ToIndex(params[i]);
+      var range = new FormulaConverter_.CellRange(params[i]);
       
       // Check if it's the first 'defining' range for this arrayFormula
       !this._arrayFormula.range && (this._arrayFormula.range = range);
       
       // Check that this range are equals to the arrayFormula bounds
-      if (this._arrayFormula.range.nbRows !== range.nbRows || this._arrayFormula.range.nbColumns !== range.nbColumns) {
-        throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
-      }
+      if (!this._arrayFormula.range.hasSameSize(range)) throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
       
+      applyArrayFormula_indexes.push(i);
       resolvedParams.push(range);
       applyArrayFormula = true;
       continue;
@@ -316,15 +329,28 @@ FormulaConverter_.prototype._applyFunction = function (func, params) {
   // Simple resolution
   if (!applyArrayFormula) return func.fn.apply(this, resolvedParams);
   
-  // ArrayFormula resolution
+  // ArrayFormula resolution: return an Array<Array>
+  var af_params = resolvedParams.slice(0);
+  var output = [];
   
-  console.log('ARRAYFORMULA to '+ func.fn.name);
-  console.log(resolvedParams);
+  for (var row = 0; row < this._arrayFormula.range.nbRows; row++) {
+    output[row] = [];
+    
+    for (var col = 0; col < this._arrayFormula.range.nbColumns; col++) {
+      
+      // Get range current cell
+      for (var index = 0; index < applyArrayFormula_indexes.length; index++) {
+        af_params[ applyArrayFormula_indexes[index] ] = resolvedParams[ applyArrayFormula_indexes[index] ].getValue(row, col);
+      }
+      
+      // Apply function on current cell
+      output[row][col] = func.fn.apply(this, af_params);
+    }
+  }
   
+  console.log('output', output);
   
-  
-  
-  return undefined;
+  return output;
 };
 
 /**
@@ -386,9 +412,7 @@ FormulaConverter_.prototype._SPS_FUNCTION_arrayformula = function (formula) {
     range: undefined,
   };
   
-  this._findFunction(formula, undefined);
-  
-  
+  return this._findFunction(formula, undefined);
 };
 
 //</editor-fold>
@@ -563,73 +587,6 @@ FormulaConverter_._rowA1ToIndex = function (rowA1, index) {
   return +rowA1 - 1 + index;
 };
 
-/**
- * Get the boundary of the given range in a1notation
- *
- * For example:
- * A1:A will return for a total Number of row of 10:
- * {
- *   firstRow: 0,
- *   firstCol: 0,
- *   numberOfRows: 10,
- *   numberOfColumns: 1
- * }
- *
- * @param {string} range - The range to process in a1 notation (A1:B5, A1:B, 1:2, C:T)
- * @param {FormulaConverter_.CellRange} [initialRange] - Data accessible in the sheet
- *
- * @return {FormulaConverter_.CellRange}
- */
-FormulaConverter_.prototype.rangeA1ToIndex = function (range, initialRange) {
-  var [firstCellA1, secondCellA1] = range.split(":");
-  
-  var firstCell = FormulaConverter_._cellA1ToIndex(firstCellA1);
-  var lastCell = FormulaConverter_._cellA1ToIndex(secondCellA1);
-  
-  // the first cell of a range is ALWAYS of the A1 format, or range is A:B and must start at first row
-  var firstRow = firstCell.row !== undefined
-    ? firstCell.row
-    : initialRange || this.dataRange.firstRow === 0
-      ? 0
-      : undefined;
-  
-  var firstCol = firstCell.col !== undefined
-    ? firstCell.col
-    : initialRange || this.dataRange.firstCol === 0
-      ? 0
-      : undefined;
-  
-  if (firstRow === undefined || firstCol === undefined) throw FormulaConverter_.ERROR.INVALID_RANGE;
-  
-  
-  var lastRow = lastCell.row !== undefined
-    ? lastCell.row
-    : initialRange
-      ? firstCell.row + initialRange.values.length - 1
-      : this.dataRange.firstRow + this.dataRange.nbRows - 1;
-  
-  var lastCol = lastCell.col !== undefined
-    ? lastCell.col
-    : initialRange
-      ? firstCell.col + initialRange.values[0].length - 1
-      : this.dataRange.firstCol + this.dataRange.nbColumns - 1;
-  
-  // Init output
-  var output = initialRange && JSON.parse(JSON.stringify(initialRange)) || {};
-  
-  output.rangeA1 = range;
-  
-  output.firstRow = Math.min(firstRow, lastRow);
-  output.firstCol = Math.min(firstCol, lastCol);
-  output.lastRow = Math.max(firstRow, lastRow);
-  output.lastCol = Math.max(firstCol, lastCol);
-  
-  output.nbRows = output.lastRow - output.firstRow + 1;
-  output.nbColumns = output.lastCol - output.firstCol + 1;
-  
-  return output;
-};
-
 FormulaConverter_.ERROR = {
   INVALID_RANGE: 'Invalid Range',
   INVALID_CELL_REFERENCE: 'Invalid cell reference',
@@ -670,6 +627,131 @@ FormulaConverter_._toLinkHtml = function (url, label) {
 };
 
 //</editor-fold>
+
+
+//<editor-fold desc="# CellRange">
+
+/**
+ * Get the boundary of the given range in a1notation
+ *
+ * For example:
+ * A1:A will return for a total Number of row of 10:
+ * {
+ *   firstRow: 0,
+ *   firstCol: 0,
+ *   numberOfRows: 10,
+ *   numberOfColumns: 1
+ * }
+ *
+ * @param {string} range - The range to process in a1 notation (A1:B5, A1:B, 1:2, C:T)
+ * @param {FormulaConverter_.CellRange} [initialRange] - Data accessible in the sheet
+ */
+FormulaConverter_.CellRange = function (range, initialRange) {
+  // Get global range
+  if (FormulaConverter_.CellRange.DataRange) {
+    this.dataRange = FormulaConverter_.CellRange.DataRange;
+  }
+  
+  var [firstCellA1, secondCellA1] = range.split(":");
+  
+  var firstCell = FormulaConverter_._cellA1ToIndex(firstCellA1);
+  var lastCell = FormulaConverter_._cellA1ToIndex(secondCellA1);
+  
+  // the first cell of a range is ALWAYS of the A1 format, or range is A:B and must start at first row
+  var firstRow = firstCell.row !== undefined
+    ? firstCell.row
+    : initialRange || this.dataRange.firstRow === 0
+      ? 0
+      : undefined;
+  
+  var firstCol = firstCell.col !== undefined
+    ? firstCell.col
+    : initialRange || this.dataRange.firstCol === 0
+      ? 0
+      : undefined;
+  
+  if (firstRow === undefined || firstCol === undefined) throw FormulaConverter_.ERROR.INVALID_RANGE;
+  
+  
+  var lastRow = lastCell.row !== undefined
+    ? lastCell.row
+    : initialRange
+      ? firstCell.row + initialRange.values.length - 1
+      : this.dataRange.firstRow + this.dataRange.nbRows - 1;
+  
+  var lastCol = lastCell.col !== undefined
+    ? lastCell.col
+    : initialRange
+      ? firstCell.col + initialRange.values[0].length - 1
+      : this.dataRange.firstCol + this.dataRange.nbColumns - 1;
+  
+  
+  if (initialRange) {
+    this.values = JSON.parse(JSON.stringify(initialRange.values));
+    this.formulas = JSON.parse(JSON.stringify(initialRange.formulas));
+    
+    // Store global dataRange for later range determination
+    FormulaConverter_.CellRange.DataRange = this;
+  }
+  
+  this.rangeA1 = range;
+  
+  this.firstRow = Math.min(firstRow, lastRow);
+  this.firstCol = Math.min(firstCol, lastCol);
+  this.lastRow = Math.max(firstRow, lastRow);
+  this.lastCol = Math.max(firstCol, lastCol);
+  
+  this.nbRows = this.lastRow - this.firstRow + 1;
+  this.nbColumns = this.lastCol - this.firstCol + 1;
+};
+
+/**
+ * Test if a CellRange got the same bounds as the current one
+ *
+ * @param {FormulaConverter_.CellRange} cellRange
+ *
+ * @return {boolean}
+ */
+FormulaConverter_.CellRange.prototype.hasSameSize = function(cellRange) {
+  return this.nbRows === cellRange.nbRows && this.nbColumns === cellRange.nbColumns;
+};
+
+/**
+ * Get cell value at given offset
+ *
+ * @param {number} row - relative 0-based index row
+ * @param {number} col - relative 0-based index column
+ *
+ * @return {*}
+ */
+FormulaConverter_.CellRange.prototype.getValue = function(row, col) {
+  // Sanity check
+  if (row < 0 || col < 0 || row >= this.dataRange.nbRows || col >= this.dataRange.nbColumns) {
+    throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
+  }
+  
+  return this.dataRange.values[this.dataRange.firstRow + row][this.dataRange.firstCol + col];
+};
+
+
+
+
+/**
+ * Test if something is a CellRange
+ *
+ * @param {*} val
+ *
+ * @return {boolean}
+ */
+FormulaConverter_.isCellRange = function (val) {
+  return val instanceof FormulaConverter_.CellRange;
+};
+
+//</editor-fold>
+
+
+
+
 
 // LOCAL TEST
 function test() {
@@ -756,6 +838,7 @@ function test() {
   
   var res = converter.process();
   
+  console.log('\n########### RESULTS ##########\n');
   console.log(res);
   
 }
