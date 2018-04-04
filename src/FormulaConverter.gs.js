@@ -28,7 +28,7 @@
  * @param {string[][]} [param.formulas]                 - a two-dimensional array of formulas in string format
  * @param {Array<Array>} [param.values]                 - a two-dimensional array of values
  * @param {number[]} [param.columnsIgnored]             - an array of relative indexes of all columns to skip (no conversion)
- * 
+ *
  * @return {object[][]}
  */
 function convertFormulasToHTML(param) {
@@ -51,59 +51,59 @@ function convertFormulasToHTML(param) {
   
   return converter.process();
   
-/*
-  // Double loop for 2 dimensions array
-  for (var i = 0; i < numberOfRows; i++) {
-    for (var j = 0; j < numberOfCols; j++) {
-      if (columnsIgnored && columnsIgnored_set[j]) continue;
-      
-      var formula = formulas[i][j];
-      
-      // If no formula, check if cell begins with http (a valid URL value)
-      if (!formula && /^http/.test(values[i][j].toString())) {
-        output[i][j] = FormulaConverter_._toLinkHtml(values[i][j]);
+  /*
+    // Double loop for 2 dimensions array
+    for (var i = 0; i < numberOfRows; i++) {
+      for (var j = 0; j < numberOfCols; j++) {
+        if (columnsIgnored && columnsIgnored_set[j]) continue;
         
-        continue;
-      }
-      
-      // TODO: check regex (we only want the first parameter of the Image formula)
-      var imageFormula = formula.match(/^=(?:arrayformula\(image\((.*?)[,;]?\)\)|image\(['"]?(.*?)[,;]?['"]?\))/i);
-      
-      if (imageFormula) {
-        FormulaConverter_._insertHTML_fromFormula({row: i, col: j, rangeFormula: imageFormula[1] || imageFormula[2]}, values, output);
+        var formula = formulas[i][j];
         
-        continue;
+        // If no formula, check if cell begins with http (a valid URL value)
+        if (!formula && /^http/.test(values[i][j].toString())) {
+          output[i][j] = FormulaConverter_._toLinkHtml(values[i][j]);
+          
+          continue;
+        }
+        
+        // TODO: check regex (we only want the first parameter of the Image formula)
+        var imageFormula = formula.match(/^=(?:arrayformula\(image\((.*?)[,;]?\)\)|image\(['"]?(.*?)[,;]?['"]?\))/i);
+        
+        if (imageFormula) {
+          FormulaConverter_._insertHTML_fromFormula({row: i, col: j, rangeFormula: imageFormula[1] || imageFormula[2]}, values, output);
+          
+          continue;
+        }
+        
+        
+        // TODO: check regex
+        // TODO: add HYPERLINK(url, IMAGE(url)) support (build clickable images)
+        var hyperLinkFormula = formula.match(/=(?:arrayformula\(HYPERLINK\((.*?)(?:[,;]\s?(.*?))?\)\)|HYPERLINK\(["']*(.*?)["']*(?:[,;]\s?["']*(.*?))?["']*\))/i);
+        if (!hyperLinkFormula) continue;
+        
+        // check if it's a simple hyperlink formula (just 2 strings, no cell reference)
+        // in that case, process is much more simple, no need to call FormulaConverter_._insertHTML_fromFormula()
+        // TODO: check if we can't use first regex for this as well
+        var simpleHyperLink = /=(?:HYPERLINK\(["'](.*?)["'](?:[,;]\s?["'](.*?))?["']\))/i;
+        var simple = formula.match(simpleHyperLink);
+        
+        if (simple) {
+          output[i][j] = FormulaConverter_._toLinkHtml(simple[1], simple[2]);
+        }
+        else {
+          FormulaConverter_._insertHTML_fromFormula({
+            row: i,
+            col: j,
+            rangeFormula: hyperLinkFormula[1] || hyperLinkFormula[3],
+            label: hyperLinkFormula[2] || hyperLinkFormula[4] || hyperLinkFormula[1] || hyperLinkFormula[3]
+          }, values, output);
+        }
+        
       }
-      
-      
-      // TODO: check regex
-      // TODO: add HYPERLINK(url, IMAGE(url)) support (build clickable images)
-      var hyperLinkFormula = formula.match(/=(?:arrayformula\(HYPERLINK\((.*?)(?:[,;]\s?(.*?))?\)\)|HYPERLINK\(["']*(.*?)["']*(?:[,;]\s?["']*(.*?))?["']*\))/i);
-      if (!hyperLinkFormula) continue;
-      
-      // check if it's a simple hyperlink formula (just 2 strings, no cell reference)
-      // in that case, process is much more simple, no need to call FormulaConverter_._insertHTML_fromFormula()
-      // TODO: check if we can't use first regex for this as well
-      var simpleHyperLink = /=(?:HYPERLINK\(["'](.*?)["'](?:[,;]\s?["'](.*?))?["']\))/i;
-      var simple = formula.match(simpleHyperLink);
-      
-      if (simple) {
-        output[i][j] = FormulaConverter_._toLinkHtml(simple[1], simple[2]);
-      }
-      else {
-        FormulaConverter_._insertHTML_fromFormula({
-          row: i,
-          col: j,
-          rangeFormula: hyperLinkFormula[1] || hyperLinkFormula[3],
-          label: hyperLinkFormula[2] || hyperLinkFormula[4] || hyperLinkFormula[1] || hyperLinkFormula[3]
-        }, values, output);
-      }
-      
     }
-  }
-  
-  return output;
-*/
+    
+    return output;
+  */
 }
 
 
@@ -146,15 +146,19 @@ this['FormulaConverter'] = {
  *   cols: number
  * }} FormulaConverter_.DataRange
  */
+/**
+ * @typedef {{fn: Function, param: Array<{name: string, type: 'CELL' | 'FORMULA'}>}} FormulaConverter_.FUNCTION
+ */
+
 
 /**
  * Build helper formula converter on the givenDataRange (accessible data)
- * 
+ *
  * @param {string} range
  * @param {Array<Array<string || Object>>} values
  * @param {Array<Array<string>>} formulas
  * @param {Array<number | string>} [ignoredCols] - Exclude columns of the process, number are index relative to the range, string are absolute column labels ('A')
- * 
+ *
  * @constructor
  * @private
  */
@@ -170,16 +174,19 @@ var FormulaConverter_ = function (range, values, formulas, ignoredCols) {
    */
   this.dataRange = this.rangeA1ToIndex(range, {
     values: values,
-    formulas: formulas
+    formulas: formulas,
+    output: values,
   });
   
-  // init output
-  this.output = [];
+  this.output = this.dataRange.output;
+  
+  // init processed cells
+  this._processed = [];
   for (var i = 0; i < this.dataRange.nbRows; i++) {
-    this.output[i] = [];
+    this._processed[i] = [];
     
     for (var j = 0; j < this.dataRange.nbColumns; j++) {
-      this.output[i][j] = '';
+      this._processed[i][j] = false;
     }
   }
   
@@ -194,6 +201,32 @@ var FormulaConverter_ = function (range, values, formulas, ignoredCols) {
         : FormulaConverter_._colA1ToIndex(col) - this.dataRange.firstCol
       ] = true;
   }.bind(this));
+  
+  // Init SPS functions
+  /**
+   * @type {Object<FormulaConverter_.FUNCTION>}
+   */
+  this.FUNCTIONS = {
+    hyperlink: {
+      fn: this._SPS_FUNCTION_hyperlink,
+      param: [
+        {name: 'url', type: 'CELL'},
+        {name: 'label', type: 'CELL'},
+      ]
+    },
+    image: {
+      fn: this._SPS_FUNCTION_image,
+      param: [
+        {name: 'url', type: 'CELL'},
+      ]
+    },
+    arrayformula: {
+      fn: this._SPS_FUNCTION_arrayformula,
+      param: [
+        {name: 'formula', type: 'FORMULA'},
+      ]
+    },
+  }
   
 };
 
@@ -210,7 +243,7 @@ FormulaConverter_.prototype.process = function () {
     // process all rows
     for (var i = 0; i < this.dataRange.nbRows; i++) {
       // Skip already processed cells
-      if (this.output[i][j]) continue;
+      if (this._processed[i][j]) continue;
       
       // If no formula, check if cell begins with http (a valid URL value)
       if (!this.dataRange.formulas[i][j]) {
@@ -218,12 +251,14 @@ FormulaConverter_.prototype.process = function () {
           this.output[i][j] = FormulaConverter_._toLinkHtml(this.dataRange.values[i][j]);
         }
         
+        this._processed[i][j] = true;
         continue;
       }
       
       var res;
       try {
-        res = this.findFunction((this.dataRange.formulas[i][j] || '').slice(1), this.dataRange.values[i][j]);
+        this._arrayFormula = null;
+        res = this._findFunction((this.dataRange.formulas[i][j] || '').slice(1), this.dataRange.values[i][j]);
       }
       catch (e) {
         res = '#ERROR!';
@@ -232,6 +267,8 @@ FormulaConverter_.prototype.process = function () {
       
       // Store result if it is a value
       res !== undefined && (this.output[i][j] = res);
+      
+      this._processed[i][j] = true;
     }
   }
   
@@ -241,53 +278,104 @@ FormulaConverter_.prototype.process = function () {
 
 /**
  * Start formula parsing
- * 
+ *
  * @param {string} formula
- * @param {string} value
- * 
+ * @param {string} [value]
+ *
  * @return {*|boolean|string}
  */
-FormulaConverter_.prototype.findFunction = function(formula, value) {
+FormulaConverter_.prototype._findFunction = function(formula, value) {
   var [/*full match*/, funcName, paramString] = formula.match(/^\s*(\w+)\((.+)\)\s*$/) || [];
   
+  // Clean function and its parameters
   var params = FormulaConverter_._extractParam(paramString || '');
   funcName = (funcName || '').toLowerCase();
   
   // get corresponding Sps function
-  var func = this['_SPS_FUNCTION_'+ funcName] || false;
+  var func = this.FUNCTIONS[funcName] || false;
+  
   
   // Apply function
   var result = func
-    ? func.apply(this, params)
+    ? this._applyFunction(func, params)
     : value;
   
   // Test if result is an URL
-  /^http/.test(result) && (result = FormulaConverter_._toLinkHtml(result));
+  result && /^http/.test(result) && (result = FormulaConverter_._toLinkHtml(result));
   
-  return result; 
+  return result;
 };
 
 /**
  * Return the value for either a quote surrounded string, or a A1 cell reference
  *
- * @param {string} param
+ * @param {FormulaConverter_.FUNCTION} func
+ * @param {Array<string>} params
  *
- * @return {string}
  * @private
  */
-FormulaConverter_.prototype._getParamValue = function (param) {
-  var [/*full match*/, value] = param.match(/^['"](.*)['"]$/) || [];
+FormulaConverter_.prototype._applyFunction = function (func, params) {
+  var resolvedParams = [];
+  var applyArrayFormula = false;
   
-  // Text value
-  if (value !== undefined) return value;
-  
-  // Is it a cell reference ?
-  if (/^[A-Z]+\d+$/.test(param)){
-    return this._getA1CellValue(param);
+  for (var i = 0; i < params.length; i++) {
+    var [/*full match*/, value] = params[i].match(/^['"](.*)['"]$/) || [];
+    
+    // Text value
+    if (value !== undefined){
+      resolvedParams.push(value);
+      continue;
+    }
+    
+    // Is it a cell reference ?
+    if (/^[A-Z]+\d+$/.test(params[i])){
+      resolvedParams.push(this._getA1CellValue(params[i]));
+      continue;
+    }
+    
+    // Pass formula to function if it's the param type
+    if (func.param[i].type === 'FORMULA') {
+      resolvedParams.push(params[i]);
+      continue;
+    }
+    
+    // Test for range / formula
+    if (/^[A-Z]+\d+:[A-Z]*\d*$/.test(params[i])){
+      
+      // Type is a CELL here, so it can not take a range
+      if (!this._arrayFormula) throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
+      
+      var range = this.rangeA1ToIndex(params[i]);
+      
+      // Check if it's the first 'defining' range for this arrayFormula
+      !this._arrayFormula.range && (this._arrayFormula.range = range);
+      
+      // Check that this range are equals to the arrayFormula bounds
+      if (this._arrayFormula.range.nbRows !== range.nbRows || this._arrayFormula.range.nbColumns !== range.nbColumns) {
+        throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
+      }
+      
+      resolvedParams.push(range);
+      applyArrayFormula = true;
+      continue;
+    }
+    
+    // It's a formula, process it
+    resolvedParams.push(this._findFunction(params[i], undefined));
   }
   
-  // it's a formula ! (can be a range too: A1:B)
-  return this.findFunction(param, undefined);
+  // Simple resolution
+  if (!applyArrayFormula) return func.fn.apply(this, resolvedParams);
+  
+  // ArrayFormula resolution
+  
+  console.log('ARRAYFORMULA to '+ func.fn.name);
+  console.log(resolvedParams);
+  
+  
+  
+  
+  return undefined;
 };
 
 /**
@@ -311,46 +399,45 @@ FormulaConverter_.prototype._getA1CellValue = function (A1) {
 
 /**
  * Apply the Hyperlink function
- * 
+ *
  * @param {string} url
  * @param {string} [label]
- * 
+ *
  * @private
  */
 FormulaConverter_.prototype._SPS_FUNCTION_hyperlink = function (url, label) {
-  console.log('HYPERLINK', url, label);
-  
-  url = this._getParamValue(url);
-  label = label && this._getParamValue(label) || '';
-  
-  
-  return FormulaConverter_._toLinkHtml(url, label);
+  return FormulaConverter_._toLinkHtml(url, label || '');
 };
 
 /**
  * Apply the Image function
- * 
+ *
  * @param {string} url
- * 
+ *
  * @private
  */
 FormulaConverter_.prototype._SPS_FUNCTION_image = function (url) {
-  console.log('IMAGE', url);
-  
-  url = this._getParamValue(url);
-  
   return FormulaConverter_._toImgHtml(url);
 };
 
 /**
  * Apply the ArrayFormula function
- * 
+ *
  * @param {string} formula
- * 
+ *
  * @private
  */
 FormulaConverter_.prototype._SPS_FUNCTION_arrayformula = function (formula) {
   console.log('ARRAYFORMULA', formula);
+  
+  /**
+   * @type {{range: FormulaConverter_.CellRange}}
+   */
+  this._arrayFormula = {
+    range: undefined,
+  };
+  
+  this._findFunction(formula, undefined);
   
   
 };
@@ -621,8 +708,8 @@ FormulaConverter_._rowA1ToIndex = function (rowA1, index) {
  * }
  *
  * @param {string} range - The range to process in a1 notation (A1:B5, A1:B, 1:2, C:T)
- * @param {FormulaConverter_.CellRange} initialRange - Data accessible in the sheet
- * 
+ * @param {FormulaConverter_.CellRange} [initialRange] - Data accessible in the sheet
+ *
  * @return {FormulaConverter_.CellRange}
  */
 FormulaConverter_.prototype.rangeA1ToIndex = function (range, initialRange) {
@@ -720,7 +807,7 @@ FormulaConverter_._toLinkHtml = function (url, label) {
 function test() {
   console.log('START');
   
-  var param = {
+  var _param = {
     values: [
       ["Simple link (no formula)", "http://www.ikea.com/us/en/images/products/tjena-box-with-lid-green__0321624_PE515923_S4.JPG"],
       ["Simple HYPERLINK", "http://www.ikea.com/us/en/images/products/micke-desk-white__0324519_PE517088_S4.JPG"],
@@ -754,6 +841,43 @@ function test() {
       ["", "=HYPERLINK(C2, IMAGE(C2))"],
       ["", "=ARRAYFORMULA(HYPERLINK(C2:C3, IMAGE(C2:C3)))"],
       ["", ""]
+    ],
+    range: 'B2:C',
+  };
+  var param = {
+    values: [
+      ["Simple link (no formula)", "http://www.ikea.com/us/en/images/products/tjena-box-with-lid-green__0321624_PE515923_S4.JPG"],
+      ["Simple HYPERLINK", "http://www.ikea.com/us/en/images/products/micke-desk-white__0324519_PE517088_S4.JPG"],
+      ["HYPERLINK with link label", "Bouh"],
+      ["HYPERLINK with cell ref for url", "Bouh"],
+      ["HYPERLINK with 2 cells ref", "Simple link (no formula)"],
+      ["ARRAYFORMULA + HYPERLINK", "Bouh"],
+      ["idem", "Simple link (no formula)"],
+      ["Simple IMAGE", ""],
+      ["IMAGE with cell ref for url", ""],
+      ["ARRAYFORMULA + IMAGE", ""],
+      ["idem", ""],
+      ["Simple HYPERLINK + IMAGE", ""],
+      ["HYPERLINK + IMAGE with cell ref", ""],
+      ["HYPERLINK + IMAGE with ARRAYFORMULA", ""],
+      ["idem", ""],
+    ],
+    formulas: [
+      ["", ""],
+      ["", ""],
+      ["", ""],
+      ["", ""],
+      ["", ""],
+      ["", "=ARRAYFORMULA(HYPERLINK(C2:C3, C5:C6))"],
+      ["", ""],
+      ["", ""],
+      ["", ""],
+      ["", ""],
+      ["", ""],
+      ["", ""],
+      ["", ""],
+      ["", ""],
+      ["", ""],
     ],
     range: 'B2:C',
   };
