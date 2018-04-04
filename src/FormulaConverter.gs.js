@@ -65,12 +65,6 @@ this['FormulaConverter'] = {
  * }} FormulaConverter_.cellA1
  */
 /**
- * @typedef {{
- *   rows: number,
- *   cols: number
- * }} FormulaConverter_.DataRange
- */
-/**
  * @typedef {{fn: Function, param: Array<{name: string, type: 'CELL' | 'FORMULA'}>}} FormulaConverter_.FUNCTION
  */
 
@@ -366,8 +360,6 @@ FormulaConverter_.prototype._applyFunction = function (func, params) {
     }
   }
   
-  console.log('output', output);
-  
   return output;
 };
 
@@ -396,17 +388,19 @@ FormulaConverter_.prototype._getA1CellValue = function (A1) {
  * @param {string} url
  * @param {string} [label]
  *
+ * @return {string}
  * @private
  */
 FormulaConverter_.prototype._SPS_FUNCTION_hyperlink = function (url, label) {
-  return FormulaConverter_._toLinkHtml(url, label || '');
+  return FormulaConverter_._toLinkHtml(url, label);
 };
 
 /**
  * Apply the Image function
- *
+ * 
  * @param {string} url
  *
+ * @return {string}
  * @private
  */
 FormulaConverter_.prototype._SPS_FUNCTION_image = function (url) {
@@ -418,12 +412,13 @@ FormulaConverter_.prototype._SPS_FUNCTION_image = function (url) {
  *
  * @param {string} formula
  *
+ * @return {Array<Array<string>>}
  * @private
  */
 FormulaConverter_.prototype._SPS_FUNCTION_arrayformula = function (formula) {
-  console.log('ARRAYFORMULA', formula);
-  
   /**
+   * Store ArrayFormula info
+   * 
    * @type {{range: FormulaConverter_.CellRange}}
    */
   this._arrayFormula = {
@@ -621,15 +616,7 @@ FormulaConverter_.ERROR = {
  * @return {string}
  */
 FormulaConverter_._toImgHtml = function (url) {
-  url = url || '';
-  
-  // if sheet contains 2 columns, one with raw url to image and one with the image formula placed after
-  // the url in first column will be replaced with an HTML anchor
-  // And then we will try to add an additional img tag, which will break
-  // So check if there's already an HTML anchor and remove it if it's the case
-  url = (url.match(/href="(.*?)"/) || [])[1] || url;
-  
-  return '<img style="max-width:100%" src="'+ url +'"/>';
+  return '<img style="max-width:100%" src="'+ (url || '') +'"/>';
 };
 
 /**
@@ -644,10 +631,8 @@ FormulaConverter_._toLinkHtml = function (url, label) {
   return '<a href="'+ url +'">'+ (label || url) +'</a>';
 };
 
-//</editor-fold>
 
-
-//<editor-fold desc="# CellRange">
+//<editor-fold desc="# FormulaConverter_.CellRange">
 
 /**
  * Get the boundary of the given range in a1notation
@@ -712,6 +697,7 @@ FormulaConverter_.CellRange = function (range, initialRange) {
     FormulaConverter_.CellRange.DataRange = this;
   }
   
+  // noinspection JSUnusedGlobalSymbols
   this.rangeA1 = range;
   
   this.firstRow = Math.min(firstRow, lastRow);
@@ -782,3 +768,7 @@ FormulaConverter_.isCellRange = function (val) {
 };
 
 //</editor-fold>
+
+
+//</editor-fold>
+
