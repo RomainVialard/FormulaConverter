@@ -113,7 +113,7 @@ var FormulaConverter_ = function (range, values, formulas, ignoredCols) {
   }
   
   // Clone values to init output
-  this.output = JSON.parse(JSON.stringify(this._processed/*values*/));
+  this.output = JSON.parse(JSON.stringify(values));
   
   
   // Prepare quick ignored columns check
@@ -323,7 +323,21 @@ FormulaConverter_.prototype._applyFunction = function (func, params) {
     }
     
     // It's a formula, process it
-    resolvedParams.push(this._findFunction(params[i], undefined));
+    var res = this._findFunction(params[i], undefined);
+    
+    // check if result is an array or not
+    if (Array.isArray(res)) {
+      // Type is a CELL here, so it can not take a range
+      if (!this._arrayFormula || !this._arrayFormula.range.hasSameSize(res)) throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
+  
+      applyArrayFormula_indexes.push(i);
+      resolvedParams.push(res);
+      applyArrayFormula = true;
+      continue;
+    }
+    
+    // If not an Array, just push the result
+    resolvedParams.push(res);
   }
   
   // Simple resolution
@@ -340,7 +354,11 @@ FormulaConverter_.prototype._applyFunction = function (func, params) {
       
       // Get range current cell
       for (var index = 0; index < applyArrayFormula_indexes.length; index++) {
-        af_params[ applyArrayFormula_indexes[index] ] = resolvedParams[ applyArrayFormula_indexes[index] ].getValue(row, col);
+        var rangeLike = resolvedParams[ applyArrayFormula_indexes[index] ];
+        
+        af_params[ applyArrayFormula_indexes[index] ] = Array.isArray(rangeLike)
+          ? rangeLike[row][col]
+          : rangeLike.getValue(row, col);
       }
       
       // Apply function on current cell
@@ -701,6 +719,13 @@ FormulaConverter_.CellRange = function (range, initialRange) {
   this.lastRow = Math.max(firstRow, lastRow);
   this.lastCol = Math.max(firstCol, lastCol);
   
+  this.dataRange && (this.relative = {
+    firstRow: this.firstRow - this.dataRange.firstRow,
+    firstCol: this.firstCol - this.dataRange.firstCol,
+    lastRow: this.lastRow - this.dataRange.firstRow,
+    lastCol: this.lastCol - this.dataRange.firstCol,
+  });
+  
   this.nbRows = this.lastRow - this.firstRow + 1;
   this.nbColumns = this.lastCol - this.firstCol + 1;
 };
@@ -708,11 +733,16 @@ FormulaConverter_.CellRange = function (range, initialRange) {
 /**
  * Test if a CellRange got the same bounds as the current one
  *
- * @param {FormulaConverter_.CellRange} cellRange
+ * @param {FormulaConverter_.CellRange || Array<Array>} cellRange
  *
  * @return {boolean}
  */
 FormulaConverter_.CellRange.prototype.hasSameSize = function(cellRange) {
+  // Check for array
+  if (Array.isArray(cellRange)) {
+    return this.nbRows === cellRange.length && this.nbColumns === cellRange[0].length;
+  }
+  
   return this.nbRows === cellRange.nbRows && this.nbColumns === cellRange.nbColumns;
 };
 
@@ -726,14 +756,18 @@ FormulaConverter_.CellRange.prototype.hasSameSize = function(cellRange) {
  */
 FormulaConverter_.CellRange.prototype.getValue = function(row, col) {
   // Sanity check
-  if (row < 0 || col < 0 || row >= this.dataRange.nbRows || col >= this.dataRange.nbColumns) {
+  if (row < 0 || col < 0 || row >= this.nbRows || col >= this.nbColumns) {
     throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
   }
   
-  return this.dataRange.values[this.dataRange.firstRow + row][this.dataRange.firstCol + col];
+  // it's the global range
+  if (!this.dataRange) {
+    return this.values[row][col];
+  }
+  
+  // All ranges are relative to global data range
+  return this.dataRange.values[this.relative.firstRow + row][this.relative.firstCol + col];
 };
-
-
 
 
 /**
@@ -748,107 +782,3 @@ FormulaConverter_.isCellRange = function (val) {
 };
 
 //</editor-fold>
-
-
-
-
-
-// LOCAL TEST
-function test() {
-  console.log('START');
-  
-  // noinspection JSUnusedLocalSymbols
-  var _param = {
-    values: [
-      ["Simple link (no formula)", "http://www.ikea.com/us/en/images/products/tjena-box-with-lid-green__0321624_PE515923_S4.JPG"],
-      ["Simple HYPERLINK", "http://www.ikea.com/us/en/images/products/micke-desk-white__0324519_PE517088_S4.JPG"],
-      ["HYPERLINK with link label", "Bouh"],
-      ["HYPERLINK with cell ref for url", "Bouh"],
-      ["HYPERLINK with 2 cells ref", "Simple link (no formula)"],
-      ["ARRAYFORMULA + HYPERLINK", "Bouh"],
-      ["idem", "Simple link (no formula)"],
-      ["Simple IMAGE", ""],
-      ["IMAGE with cell ref for url", ""],
-      ["ARRAYFORMULA + IMAGE", ""],
-      ["idem", ""],
-      ["Simple HYPERLINK + IMAGE", ""],
-      ["HYPERLINK + IMAGE with cell ref", ""],
-      ["HYPERLINK + IMAGE with ARRAYFORMULA", ""],
-      ["idem", ""]
-    ],
-    formulas: [
-      ["", ""],
-      ["", "=HYPERLINK(\"http://www.ikea.com/us/en/images/products/micke-desk-white__0324519_PE517088_S4.JPG\")"],
-      ["", "=HYPERLINK(\"http://www.ikea.com/us/en/images/products/micke-desk-white__0324519_PE517088_S4.JPG\", \"Bouh\")"],
-      ["", "=HYPERLINK(C2, \"Bouh\")"],
-      ["", "=HYPERLINK(C2, B2)"],
-      ["", "=ARRAYFORMULA(HYPERLINK(C2:C3, C5:C6))"],
-      ["", ""],
-      ["", "=IMAGE(\"http://www.ikea.com/us/en/images/products/micke-desk-white__0324519_PE517088_S4.JPG\")"],
-      ["", "=IMAGE(C2)"],
-      ["", "=ARRAYFORMULA(IMAGE(C2:C3))"],
-      ["", ""],
-      ["", "=HYPERLINK(\"http://www.ikea.com/us/en/images/products/tjena-box-with-lid-green__0321624_PE515923_S4.JPG\", IMAGE(\"http://www.ikea.com/us/en/images/products/tjena-box-with-lid-green__0321624_PE515923_S4.JPG\"))"],
-      ["", "=HYPERLINK(C2, IMAGE(C2))"],
-      ["", "=ARRAYFORMULA(HYPERLINK(C2:C3, IMAGE(C2:C3)))"],
-      ["", ""]
-    ],
-    range: 'B2:C',
-  };
-  var param = {
-    values: [
-      ["Simple link (no formula)", "http://www.ikea.com/us/en/images/products/tjena-box-with-lid-green__0321624_PE515923_S4.JPG"],
-      ["Simple HYPERLINK", "http://www.ikea.com/us/en/images/products/micke-desk-white__0324519_PE517088_S4.JPG"],
-      ["HYPERLINK with link label", "Bouh"],
-      ["HYPERLINK with cell ref for url", "Bouh"],
-      ["HYPERLINK with 2 cells ref", "Simple link (no formula)"],
-      ["ARRAYFORMULA + HYPERLINK", "Bouh"],
-      ["idem", "Simple link (no formula)"],
-      ["Simple IMAGE", ""],
-      ["IMAGE with cell ref for url", ""],
-      ["ARRAYFORMULA + IMAGE", ""],
-      ["idem", ""],
-      ["Simple HYPERLINK + IMAGE", ""],
-      ["HYPERLINK + IMAGE with cell ref", ""],
-      ["HYPERLINK + IMAGE with ARRAYFORMULA", ""],
-      ["idem", ""],
-    ],
-    formulas: [
-      ["", ""],
-      ["", ""],
-      ["", ""],
-      ["", ""],
-      ["", ""],
-      ["", "=ARRAYFORMULA(HYPERLINK(C2:C3, C5:C6))"],
-      ["", ""],
-      ["", ""],
-      ["", ""],
-      ["", ""],
-      ["", ""],
-      ["", ""],
-      ["", ""],
-      ["", ""],
-      ["", ""],
-    ],
-    range: 'B2:C',
-  };
-  
-  // test get data bound
-  var converter = new FormulaConverter_(param.range, param.values, param.formulas);
-  
-  var res = converter.process();
-  
-  console.log('\n########### RESULTS ##########\n');
-  console.log(res);
-  
-}
-
-test();
-
-
-
-// extractParam(`"azert", "zaert", "qdsfgh"`);
-// extractParam(`"aze,rt", "zaert", "qdsfgh"`);
-// extractParam(`IMAGE("aze,rt", "zaert"), "qdsfgh"`);
-// FormulaConverter_.extractParam(`IMAGE("az""e,rt"; "zaert"); "qdsfgh", 14`);
-
