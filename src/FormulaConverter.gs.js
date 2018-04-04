@@ -275,7 +275,7 @@ FormulaConverter_.prototype._applyFunction = function (func, params) {
   var applyArrayFormula_indexes = [];
   var applyArrayFormula = false;
   
-  for (var i = 0; i < params.length; i++) {
+  for (var i = 0; i < params.length && i < func.param.length; i++) {
     var [/*full match*/, value] = params[i].match(/^['"](.*)['"]$/) || [];
     
     // Text value
@@ -475,8 +475,8 @@ FormulaConverter_._extractParam = function (txt) {
       
       // update state
       state.token = group[group.length - 1] || '';
-      state.closers = FormulaConverter_.PARAM_EXTRACT.closers[state.token] || {};
-      state.openers = FormulaConverter_.PARAM_EXTRACT.openers[state.token] || {};
+      state.closers = state.token && FormulaConverter_.PARAM_EXTRACT.closers[state.token] || {};
+      state.openers = state.token && FormulaConverter_.PARAM_EXTRACT.openers[state.token] || FormulaConverter_.PARAM_EXTRACT.openers.all;
       
       // Reset string status, as when a group close, we are outside a string
       state.inString = false;

@@ -19,11 +19,44 @@ function onOpen() {
 function tests() {
   
   var sps = SpreadsheetApp.getActiveSpreadsheet();
-  var sheetTests = sps.getSheetByName('tests');
   
+  var currentSheetName = sps.getActiveSheet().getName();
   
-  var range = sheetTests.getRange('B2:C');
-  var rangeOutput = sheetTests.getRange('E2:E');
+  var testList = {
+    'validation': {
+      sheet: 'validation',
+      rangeInput: 'B2:C',
+      rangeOutput: 'E2:E',
+      res: {
+        offset: 0,
+        columns: [1],
+      } 
+    },
+    'test YAMM': {
+      sheet: 'test YAMM',
+      rangeInput: 'A1:F',
+      rangeOutput: 'H2:M',
+      res: {
+        offset: 1,
+        columns: [0, 1, 2, 3, 4, 5],
+      }
+    },
+    'isolatedTest': {
+      sheet: 'isolatedTest',
+      rangeInput: 'B4:B5',
+      rangeOutput: 'D4:D5',
+      res: {
+        offset: 0,
+        columns: [0],
+      }
+    },
+  };
+  
+  var currentTest = testList[currentSheetName] || testList.validation;
+  
+  var sheetTests = sps.getSheetByName(currentTest.sheet);
+  var range = sheetTests.getRange(currentTest.rangeInput);
+  var rangeOutput = sheetTests.getRange(currentTest.rangeOutput);
   
   
   var processedHyperlinkValues = FormulaConverter.convertFormulasToHTML({
@@ -34,8 +67,14 @@ function tests() {
   
   // select only output link tests
   var output = [];
-  for (var i = 0; i < processedHyperlinkValues.length; i++){
-    output.push([processedHyperlinkValues[i][1]]);
+  for (var i = currentTest.res.offset; i < processedHyperlinkValues.length; i++){
+    var row = [];
+    
+    for (var j = 0; j < currentTest.res.columns.length; j++){
+      row.push(processedHyperlinkValues[i][ currentTest.res.columns[j] ]);
+    }
+    
+    output.push(row);
   }
   
   rangeOutput.setValues(output);
@@ -106,7 +145,8 @@ function test_local() {
     ],
     range: 'B2:C',
   };
-  var param = {
+  // noinspection JSUnusedLocalSymbols
+  var __param = {
     values: [
       ["Simple link (no formula)", "http://www.ikea.com/us/en/images/products/tjena-box-with-lid-green__0321624_PE515923_S4.JPG"],
       ["Simple HYPERLINK", "http://www.ikea.com/us/en/images/products/micke-desk-white__0324519_PE517088_S4.JPG"],
@@ -143,6 +183,17 @@ function test_local() {
     ],
     range: 'B2:C',
   };
+  var param = {
+    values: [
+      [""],
+      [""],
+    ],
+    formulas: [
+      ["=HYPERLINK(\"https://sites.google.com/a/revevol.eu/images-base/hurdal-cadre-de-lit-boites-de-rangement-brun__0255068_PE399082_S4.JPG\", \"TJENA - Box with lid green\")"],
+      ["=HYPERLINK(\"https://sites.google.com/a/revevol.eu/images-base/hurdal-cadre-de-lit-boites-de-rangement-brun__0255068_PE399082_S4.JPG\", \"Bed frame with storage, white\")"],
+    ],
+    range: 'B4:B5',
+  };
   
   // test get data bound
   var converter = new FormulaConverter_(param.range, param.values, param.formulas);
@@ -154,12 +205,15 @@ function test_local() {
   
 }
 
-// test();
+// test_local();
 
 
 
-// extractParam(`"azert", "zaert", "qdsfgh"`);
-// extractParam(`"aze,rt", "zaert", "qdsfgh"`);
-// extractParam(`IMAGE("aze,rt", "zaert"), "qdsfgh"`);
-// FormulaConverter_.extractParam(`IMAGE("az""e,rt"; "zaert"); "qdsfgh", 14`);
-
+/* Test param extraction
+FormulaConverter_._extractParam(`"https://sites.google.com/a/revevol.eu/images-base/hurdal-cadre-de-lit-boites-de-rangement-brun__0255068_PE399082_S4.JPG", "Bed frame with storage, white"`);
+FormulaConverter_._extractParam(`"aze,rt", "zaert", "qd,sfgh"`);
+FormulaConverter_._extractParam(`"azert", "zaert", "qdsfgh"`);
+FormulaConverter_._extractParam(`"aze,rt", "zaert", "qdsfgh"`);
+FormulaConverter_._extractParam(`IMAGE("aze,rt", "zae,rt"), "qdsf,gh"`);
+FormulaConverter_._extractParam(`IMAGE("az""e,rt"; "zaert"); ,"qdsfgh", 14`);
+*/
