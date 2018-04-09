@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 <!-- Add new, unreleased changes here. -->
 * none
 
+## [1.1.1] - 2018-04-09
+* Fix column conversion (AZ to number) for column label greater than ZZ
+
 ## [1.1.0] - 2018-04-05
 * Update the whole Formula parsing logic
 * Fix: input Range can now start at another cell than A1

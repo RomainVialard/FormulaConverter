@@ -556,9 +556,9 @@ FormulaConverter_._cellA1ToIndex = function (cellA1, index) {
 };
 
 /**
- * Return a 0-based array index corresponding to a spreadsheet column
- * label, as in A1 notation.
- *
+ * Calculate the corresponding column index from a ABC column notation
+ * with no limit in number of columns
+ * 
  * @param {string}    colA1    Column label to be converted.
  * @param {number}   [index]   (optional, default 0) Indicate 0 or 1 indexing
  *
@@ -567,19 +567,16 @@ FormulaConverter_._cellA1ToIndex = function (cellA1, index) {
  * @throws                     Error if invalid parameter
  */
 FormulaConverter_._colA1ToIndex = function (colA1, index) {
-  if (typeof colA1 !== 'string' || colA1.length > 2) throw FormulaConverter_.ERROR.EXPECTED_COLUMN_LABEL;
+  if (typeof colA1 !== 'string') throw FormulaConverter_.ERROR.EXPECTED_COLUMN_LABEL;
   
-  // Ensure index is (default) 0 or 1, no other values accepted.
-  index = index ? 1 : 0;
+  colA1 = colA1.toUpperCase();
+  var col_index = (index ? 0 : -1);
   
-  var A = "A".charCodeAt(0);
-  var number = colA1.charCodeAt(colA1.length - 1) - A;
-  
-  if (colA1.length === 2) {
-    number += 26 * (colA1.charCodeAt(0) - A + 1);
+  for (var i = colA1.length - 1, j = 0; i > -1; i--, j++){
+    col_index += (colA1.charCodeAt(i) - 64) * Math.pow(26, j);
   }
   
-  return number + index;
+  return col_index;
 };
 
 /**
