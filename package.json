@@ -2,6 +2,7 @@
 	"name": "@scriptaddicts/gas-formula-converter",
 	"version": "1.1.1",
 	"description": "Convert spreadsheet =HYPERLINK() & =IMAGE() formulas to HTML. For Google Apps Script.",
+	"license": "Apache-2.0",
 	"author": {
 		"name": "Romain Vialard",
 		"email": "romain.vialard@gmail.com"
