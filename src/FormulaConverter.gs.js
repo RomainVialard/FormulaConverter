@@ -21,6 +21,7 @@
  * @param {string[][]} [param.formulas]                 - a two-dimensional array of formulas in string format
  * @param {Array<Array>} [param.values]                 - a two-dimensional array of values
  * @param {number[]} [param.columnsIgnored]             - an array of relative indexes of all columns to skip (no conversion)
+ * @param {boolean} [param.convertRawUrls]              - wether raw urls should be converted to HTML <a> or not, default true
  *
  * @return {object[][]}
  */
@@ -28,20 +29,22 @@ function convertFormulasToHTML(param) {
   var formulas = param.formulas;
   var values = param.values;
   var columnsIgnored = param.columnsIgnored;
+  var convertRawUrls = (param.convertRawUrls == false) ? false : true;
+
   var range = param.range;
-  
+
   if (!range) throw new Error(FormulaConverter_.ERROR.INVALID_RANGE);
-  
+
   // Get data / formula / range directly from the spreadsheet range
   if (typeof range !== 'string') {
     !formulas && (formulas = range.getFormulas());
     !values && (values = range.getValues());
-    
+
     range = range.getA1Notation();
   }
-  
-  var converter = new FormulaConverter_(range, values, formulas, columnsIgnored);
-  
+
+  var converter = new FormulaConverter_(range, values, formulas, columnsIgnored, convertRawUrls);
+
   return converter.process();
 }
 
@@ -76,15 +79,18 @@ this['FormulaConverter'] = {
  * @param {Array<Array<string || Object>>} values
  * @param {Array<Array<string>>} formulas
  * @param {Array<number | string>} [ignoredCols] - Exclude columns of the process, number are index relative to the range, string are absolute column labels ('A')
+ * @param {boolean} [convertRawUrls]             - wether raw urls should be converted to HTML <a> or not
  *
  * @constructor
  * @private
  */
-var FormulaConverter_ = function (range, values, formulas, ignoredCols) {
-  
+var FormulaConverter_ = function (range, values, formulas, ignoredCols, convertRawUrls) {
+
   // Simple sanity check
   if (formulas.length !== values.length || formulas[0].length !== values[0].length) throw new Error(FormulaConverter_.ERROR.RANGES_DONT_MATCH);
-  
+
+  this.convertRawUrls = convertRawUrls;
+
   // Get range
   // noinspection JSCheckFunctionSignatures
   /**
@@ -94,33 +100,33 @@ var FormulaConverter_ = function (range, values, formulas, ignoredCols) {
     values: values,
     formulas: formulas,
   });
-  
-  
+
+
   // init processed cells
   this._processed = [];
   for (var i = 0; i < this.dataRange.nbRows; i++) {
     this._processed[i] = [];
-    
+
     for (var j = 0; j < this.dataRange.nbColumns; j++) {
       this._processed[i][j] = false;
     }
   }
-  
+
   // Clone values to init output
   this.output = JSON.parse(JSON.stringify(values));
-  
-  
+
+
   // Prepare quick ignored columns check
   this.columnsIgnored_set = {};
-  
-  ignoredCols && ignoredCols.forEach(function(col){
+
+  ignoredCols && ignoredCols.forEach(function (col) {
     this.columnsIgnored_set[
       typeof col === 'number'
         ? col
         : FormulaConverter_._colA1ToIndex(col) - this.dataRange.firstCol
-      ] = true;
+    ] = true;
   }.bind(this));
-  
+
   // Init SPS functions
   /**
    * @type {Object<FormulaConverter_.FUNCTION>}
@@ -129,54 +135,57 @@ var FormulaConverter_ = function (range, values, formulas, ignoredCols) {
     hyperlink: {
       fn: this._SPS_FUNCTION_hyperlink,
       param: [
-        {name: 'url', type: 'CELL'},
-        {name: 'label', type: 'CELL'},
+        { name: 'url', type: 'CELL' },
+        { name: 'label', type: 'CELL' },
       ]
     },
     image: {
       fn: this._SPS_FUNCTION_image,
       param: [
-        {name: 'url', type: 'CELL'},
+        { name: 'url', type: 'CELL' },
       ]
     },
     arrayformula: {
       fn: this._SPS_FUNCTION_arrayformula,
       param: [
-        {name: 'formula', type: 'FORMULA'},
+        { name: 'formula', type: 'FORMULA' },
       ]
     },
   };
-  
+
   // noinspection JSUnusedGlobalSymbols
   this._arrayFormula = null;
-  
+
 };
 
 /**
  * Convert all IMAGE / HYPERLINK formulas to HTML value
  */
 FormulaConverter_.prototype.process = function () {
-  
+
   // Double loop for 2 dimensions array
   for (var j = 0; j < this.dataRange.nbColumns; j++) {
     // Skip ignored columns
     if (this.columnsIgnored_set[j]) continue;
-    
+
     // process all rows
     for (var i = 0; i < this.dataRange.nbRows; i++) {
       // Skip already processed cells
       if (this._processed[i][j]) continue;
-      
+
+
       // If no formula, check if cell begins with http (a valid URL value)
       if (!this.dataRange.formulas[i][j]) {
         if (/^http/.test(this.dataRange.values[i][j])) {
-          this.output[i][j] = FormulaConverter_._toLinkHtml(this.dataRange.values[i][j]);
+          if (this.convertRawUrls) {
+            this.output[i][j] = FormulaConverter_._toLinkHtml(this.dataRange.values[i][j]);
+          }
         }
-        
+
         this._processed[i][j] = true;
         continue;
       }
-      
+
       var res;
       try {
         // noinspection JSUnusedGlobalSymbols
@@ -186,53 +195,53 @@ FormulaConverter_.prototype.process = function () {
       catch (e) {
         res = '#ERROR!';
       }
-      
+
       // Apply Ranged results
-      if (Array.isArray(res)){
-        
+      if (Array.isArray(res)) {
+
         var nbRows = res.length;
         var nbCols = res[0].length;
-        
+
         for (var offset_j = 0; offset_j < nbCols; offset_j++) {
           var absolute_j = j + offset_j;
-          
+
           // Skip ignored columns
           if (this.columnsIgnored_set[absolute_j]) continue;
-          
+
           for (var offset_i = 0; offset_i < nbRows; offset_i++) {
             var absolute_i = i + offset_i;
-            
+
             // Skip already processed cells
             if (this._processed[absolute_i][absolute_j]) continue;
-            
+
             var result = res[offset_i][offset_j];
             if (result !== undefined) {
               // Test if result is an URL
               /^http/.test(result) && (result = FormulaConverter_._toLinkHtml(result));
-              
+
               this.output[absolute_i][absolute_j] = result;
             }
-            
+
             this._processed[absolute_i][absolute_j] = true;
           }
         }
-        
+
         continue;
       }
-      
+
       if (res) {
         // Test if result is an URL
         /^http/.test(res) && (res = FormulaConverter_._toLinkHtml(res));
-        
+
         // Store result if it is a value
         this.output[i][j] = res;
       }
-      
-      
+
+
       this._processed[i][j] = true;
     }
   }
-  
+
   return this.output;
 };
 
@@ -245,17 +254,17 @@ FormulaConverter_.prototype.process = function () {
  *
  * @return {*|boolean|string}
  */
-FormulaConverter_.prototype._findFunction = function(formula, value) {
+FormulaConverter_.prototype._findFunction = function (formula, value) {
   var [/*full match*/, funcName, paramString] = formula.match(/^\s*(\w+)\((.+)\)\s*$/) || [];
-  
+
   // Clean function and its parameters
   var params = FormulaConverter_._extractParam(paramString || '');
   funcName = (funcName || '').toLowerCase();
-  
+
   // get corresponding Sps function
   var func = this.FUNCTIONS[funcName] || false;
-  
-  
+
+
   // Apply function
   return func
     ? this._applyFunction(func, params)
@@ -274,92 +283,92 @@ FormulaConverter_.prototype._applyFunction = function (func, params) {
   var resolvedParams = [];
   var applyArrayFormula_indexes = [];
   var applyArrayFormula = false;
-  
+
   for (var i = 0; i < params.length && i < func.param.length; i++) {
     var [/*full match*/, value] = params[i].match(/^['"](.*)['"]$/) || [];
-    
+
     // Text value
-    if (value !== undefined){
+    if (value !== undefined) {
       resolvedParams.push(value);
       continue;
     }
-    
+
     // Is it a cell reference ?
-    if (/^[A-Z]+\d+$/.test(params[i])){
+    if (/^[A-Z]+\d+$/.test(params[i])) {
       resolvedParams.push(this._getA1CellValue(params[i]));
       continue;
     }
-    
+
     // Pass formula to function if it's the param type
     if (func.param[i].type === 'FORMULA') {
       resolvedParams.push(params[i]);
       continue;
     }
-    
+
     // Test for range / formula
-    if (/^[A-Z]+\d+:[A-Z]*\d*$/.test(params[i])){
-      
+    if (/^[A-Z]+\d+:[A-Z]*\d*$/.test(params[i])) {
+
       // Type is a CELL here, so it can not take a range
       if (!this._arrayFormula) throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
-      
+
       var range = new FormulaConverter_.CellRange(params[i]);
-      
+
       // Check if it's the first 'defining' range for this arrayFormula
       !this._arrayFormula.range && (this._arrayFormula.range = range);
-      
+
       // Check that this range are equals to the arrayFormula bounds
       if (!this._arrayFormula.range.hasSameSize(range)) throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
-      
+
       applyArrayFormula_indexes.push(i);
       resolvedParams.push(range);
       applyArrayFormula = true;
       continue;
     }
-    
+
     // It's a formula, process it
     var res = this._findFunction(params[i], undefined);
-    
+
     // check if result is an array or not
     if (Array.isArray(res)) {
       // Type is a CELL here, so it can not take a range
       if (!this._arrayFormula || !this._arrayFormula.range.hasSameSize(res)) throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
-  
+
       applyArrayFormula_indexes.push(i);
       resolvedParams.push(res);
       applyArrayFormula = true;
       continue;
     }
-    
+
     // If not an Array, just push the result
     resolvedParams.push(res);
   }
-  
+
   // Simple resolution
   if (!applyArrayFormula) return func.fn.apply(this, resolvedParams);
-  
+
   // ArrayFormula resolution: return an Array<Array>
   var af_params = resolvedParams.slice(0);
   var output = [];
-  
+
   for (var row = 0; row < this._arrayFormula.range.nbRows; row++) {
     output[row] = [];
-    
+
     for (var col = 0; col < this._arrayFormula.range.nbColumns; col++) {
-      
+
       // Get range current cell
       for (var index = 0; index < applyArrayFormula_indexes.length; index++) {
-        var rangeLike = resolvedParams[ applyArrayFormula_indexes[index] ];
-        
-        af_params[ applyArrayFormula_indexes[index] ] = Array.isArray(rangeLike)
+        var rangeLike = resolvedParams[applyArrayFormula_indexes[index]];
+
+        af_params[applyArrayFormula_indexes[index]] = Array.isArray(rangeLike)
           ? rangeLike[row][col]
           : rangeLike.getValue(row, col);
       }
-      
+
       // Apply function on current cell
       output[row][col] = func.fn.apply(this, af_params);
     }
   }
-  
+
   return output;
 };
 
@@ -373,9 +382,9 @@ FormulaConverter_.prototype._applyFunction = function (func, params) {
  */
 FormulaConverter_.prototype._getA1CellValue = function (A1) {
   var cellRef = FormulaConverter_._cellA1ToIndex(A1);
-  
+
   if (cellRef.col === undefined && cellRef.row === undefined) throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
-  
+
   return this.dataRange.values[cellRef.row - this.dataRange.firstRow][cellRef.col - this.dataRange.firstCol];
 };
 
@@ -424,7 +433,7 @@ FormulaConverter_.prototype._SPS_FUNCTION_arrayformula = function (formula) {
   this._arrayFormula = {
     range: undefined,
   };
-  
+
   return this._findFunction(formula, undefined);
 };
 
@@ -448,42 +457,42 @@ FormulaConverter_._extractParam = function (txt) {
   };
   var currentParamIndex = 0;
   var params = [];
-  
+
   for (var i = 0; i < txt.length; i++) {
     var char = txt[i];
-    
+
     // No group, and a comma: it's a parameters we can slice
     if (FormulaConverter_.PARAM_EXTRACT.paramSeparator[char] && group.length === 0) {
       params.push(txt.slice(currentParamIndex, i).trim());
-      
+
       currentParamIndex = i + 1;
       continue;
     }
-    
+
     // Manage opener / closer
     if (state.closers[char]) {
-      
+
       // Detect same quote escaping: "bla""bla" or 'bla''bla'
-      if (state.inString && char === state.token && txt[i+1] === state.token){
+      if (state.inString && char === state.token && txt[i + 1] === state.token) {
         // Skip next char
         i++;
         continue;
       }
-      
+
       // remove last token
       group.pop();
-      
+
       // update state
       state.token = group[group.length - 1] || '';
       state.closers = state.token && FormulaConverter_.PARAM_EXTRACT.closers[state.token] || {};
       state.openers = state.token && FormulaConverter_.PARAM_EXTRACT.openers[state.token] || FormulaConverter_.PARAM_EXTRACT.openers.all;
-      
+
       // Reset string status, as when a group close, we are outside a string
       state.inString = false;
     }
     else if (state.openers[char]) {
       group.push(char);
-      
+
       state = {
         closers: FormulaConverter_.PARAM_EXTRACT.closers[char] || {},
         openers: FormulaConverter_.PARAM_EXTRACT.openers[char] || {},
@@ -492,23 +501,23 @@ FormulaConverter_._extractParam = function (txt) {
       };
     }
   }
-  
+
   // Add last part
   params.push(txt.slice(currentParamIndex, i).trim());
-  
+
   return params;
 };
 FormulaConverter_.PARAM_EXTRACT = {
   openers: {
-    all: {'"': true, "'": true, "(": true},
-    '(': {'"': true, "'": true, "(": true},
+    all: { '"': true, "'": true, "(": true },
+    '(': { '"': true, "'": true, "(": true },
     '"': {},
     '': {},
   },
   closers: {
-    '(': {')': true},
-    '"': {'"': true},
-    "'": {"'": true},
+    '(': { ')': true },
+    '"': { '"': true },
+    "'": { "'": true },
   },
   isInString: {
     '(': false,
@@ -537,21 +546,21 @@ FormulaConverter_.PARAM_EXTRACT = {
 FormulaConverter_._cellA1ToIndex = function (cellA1, index) {
   // Ensure index is (default) 0 or 1, no other values accepted.
   index = index ? 1 : 0;
-  
+
   // Use regex match to find column & row references.
   // Must start with letters, end with numbers.
   // This regex still allows individuals to provide illegal strings like "AB.#%123"
   // Will accept range like : "A2", "2", "A"
   var [colA1, rowA1] = cellA1.match(/(^[A-Z]+)|([0-9]+$)/gm) || [];
-  
+
   if (colA1 === undefined && rowA1 === undefined) throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
-  
-  
+
+
   var output = {};
-  
+
   rowA1 !== undefined && (output.row = FormulaConverter_._rowA1ToIndex(rowA1, index));
   colA1 !== undefined && (output.col = FormulaConverter_._colA1ToIndex(colA1, index));
-  
+
   return output;
 };
 
@@ -568,14 +577,14 @@ FormulaConverter_._cellA1ToIndex = function (cellA1, index) {
  */
 FormulaConverter_._colA1ToIndex = function (colA1, index) {
   if (typeof colA1 !== 'string') throw FormulaConverter_.ERROR.EXPECTED_COLUMN_LABEL;
-  
+
   colA1 = colA1.toUpperCase();
   var col_index = (index ? 0 : -1);
-  
-  for (var i = colA1.length - 1, j = 0; i > -1; i--, j++){
+
+  for (var i = colA1.length - 1, j = 0; i > -1; i-- , j++) {
     col_index += (colA1.charCodeAt(i) - 64) * Math.pow(26, j);
   }
-  
+
   return col_index;
 };
 
@@ -592,7 +601,7 @@ FormulaConverter_._colA1ToIndex = function (colA1, index) {
 FormulaConverter_._rowA1ToIndex = function (rowA1, index) {
   // Ensure index is (default) 0 or 1, no other values accepted.
   index = index ? 1 : 0;
-  
+
   // The "+" will convert rowA1 to number if it's a string
   return +rowA1 - 1 + index;
 };
@@ -613,7 +622,7 @@ FormulaConverter_.ERROR = {
  * @return {string}
  */
 FormulaConverter_._toImgHtml = function (url) {
-  return '<img style="max-width:100%" src="'+ (url || '') +'"/>';
+  return '<img style="max-width:100%" src="' + (url || '') + '"/>';
 };
 
 /**
@@ -625,7 +634,7 @@ FormulaConverter_._toImgHtml = function (url) {
  * @return {string}
  */
 FormulaConverter_._toLinkHtml = function (url, label) {
-  return '<a href="'+ url +'">'+ (label || url) +'</a>';
+  return '<a href="' + url + '">' + (label || url) + '</a>';
 };
 
 
@@ -651,64 +660,64 @@ FormulaConverter_.CellRange = function (range, initialRange) {
   if (FormulaConverter_.CellRange.DataRange) {
     this.dataRange = FormulaConverter_.CellRange.DataRange;
   }
-  
+
   var [firstCellA1, secondCellA1] = range.split(":");
-  
+
   var firstCell = FormulaConverter_._cellA1ToIndex(firstCellA1);
   var lastCell = FormulaConverter_._cellA1ToIndex(secondCellA1);
-  
+
   // the first cell of a range is ALWAYS of the A1 format, or range is A:B and must start at first row
   var firstRow = firstCell.row !== undefined
     ? firstCell.row
     : initialRange || this.dataRange.firstRow === 0
       ? 0
       : undefined;
-  
+
   var firstCol = firstCell.col !== undefined
     ? firstCell.col
     : initialRange || this.dataRange.firstCol === 0
       ? 0
       : undefined;
-  
+
   if (firstRow === undefined || firstCol === undefined) throw FormulaConverter_.ERROR.INVALID_RANGE;
-  
-  
+
+
   var lastRow = lastCell.row !== undefined
     ? lastCell.row
     : initialRange
       ? firstCell.row + initialRange.values.length - 1
       : this.dataRange.firstRow + this.dataRange.nbRows - 1;
-  
+
   var lastCol = lastCell.col !== undefined
     ? lastCell.col
     : initialRange
       ? firstCell.col + initialRange.values[0].length - 1
       : this.dataRange.firstCol + this.dataRange.nbColumns - 1;
-  
-  
+
+
   if (initialRange) {
     this.values = JSON.parse(JSON.stringify(initialRange.values));
     this.formulas = JSON.parse(JSON.stringify(initialRange.formulas));
-    
+
     // Store global dataRange for later range determination
     FormulaConverter_.CellRange.DataRange = this;
   }
-  
+
   // noinspection JSUnusedGlobalSymbols
   this.rangeA1 = range;
-  
+
   this.firstRow = Math.min(firstRow, lastRow);
   this.firstCol = Math.min(firstCol, lastCol);
   this.lastRow = Math.max(firstRow, lastRow);
   this.lastCol = Math.max(firstCol, lastCol);
-  
+
   this.dataRange && (this.relative = {
     firstRow: this.firstRow - this.dataRange.firstRow,
     firstCol: this.firstCol - this.dataRange.firstCol,
     lastRow: this.lastRow - this.dataRange.firstRow,
     lastCol: this.lastCol - this.dataRange.firstCol,
   });
-  
+
   this.nbRows = this.lastRow - this.firstRow + 1;
   this.nbColumns = this.lastCol - this.firstCol + 1;
 };
@@ -720,12 +729,12 @@ FormulaConverter_.CellRange = function (range, initialRange) {
  *
  * @return {boolean}
  */
-FormulaConverter_.CellRange.prototype.hasSameSize = function(cellRange) {
+FormulaConverter_.CellRange.prototype.hasSameSize = function (cellRange) {
   // Check for array
   if (Array.isArray(cellRange)) {
     return this.nbRows === cellRange.length && this.nbColumns === cellRange[0].length;
   }
-  
+
   return this.nbRows === cellRange.nbRows && this.nbColumns === cellRange.nbColumns;
 };
 
@@ -737,17 +746,17 @@ FormulaConverter_.CellRange.prototype.hasSameSize = function(cellRange) {
  *
  * @return {*}
  */
-FormulaConverter_.CellRange.prototype.getValue = function(row, col) {
+FormulaConverter_.CellRange.prototype.getValue = function (row, col) {
   // Sanity check
   if (row < 0 || col < 0 || row >= this.nbRows || col >= this.nbColumns) {
     throw FormulaConverter_.ERROR.INVALID_CELL_REFERENCE;
   }
-  
+
   // it's the global range
   if (!this.dataRange) {
     return this.values[row][col];
   }
-  
+
   // All ranges are relative to global data range
   return this.dataRange.values[this.relative.firstRow + row][this.relative.firstCol + col];
 };
@@ -768,4 +777,3 @@ FormulaConverter_.isCellRange = function (val) {
 
 
 //</editor-fold>
-
